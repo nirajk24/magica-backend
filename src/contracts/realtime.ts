@@ -10,6 +10,10 @@ export const RunPhase = z.enum(["thinking", "working", "waiting", "finalizing"])
  * Re-sent whole on every update, so nothing here may grow unbounded with turn length:
  * `blocks` is a structure-only projection and prose travels on the append-only text
  * stream. Trigger.dev caps payloads at 3 MB.
+ *
+ * Open fields are `z.json()`, never `z.unknown()`: this object is written through
+ * `metadata.set()`, whose parameter type is JSON-serializable, so `unknown` fails to compile
+ * at the one call site that matters.
  */
 export const RunMetadata = z.object({
   phase: RunPhase,
@@ -18,7 +22,7 @@ export const RunMetadata = z.object({
   stepsCompleted: z.number(),
   blocks: z.array(BlockProjection).max(60),
   reasoningText: z.string().optional(),
-  activePlan: z.unknown().optional(),
+  activePlan: z.json().optional(),
   invocations: z.array(
     z.object({
       id: z.string(),
@@ -33,7 +37,7 @@ export const RunMetadata = z.object({
   ),
   assistantMessageId: z.string().optional(),
   waitpoint: z
-    .object({ id: z.string(), kind: z.string(), payload: z.unknown() })
+    .object({ id: z.string(), kind: z.string(), payload: z.json() })
     .optional(),
   servedModel: z.string().optional(),
   tokenUsage: z

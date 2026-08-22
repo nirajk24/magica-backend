@@ -11,7 +11,10 @@ const cors = {
 
 /**
  * Clerk verifies the `Authorization: Bearer` token the frontend attaches — the two repos
- * are separate origins, so no session cookie is ever sent.
+ * are separate origins, so no session cookie is ever sent. It enforces nothing here:
+ * `defineRoute` checks auth where the data is read, which is Clerk's current guidance.
+ *
+ * Named `proxy.ts` because Next 16 deprecated the `middleware` file convention.
  *
  * The OPTIONS short-circuit must run before auth: a preflight carries no Authorization
  * header, so authenticating first would 401 it and the browser would never send the real

@@ -188,14 +188,30 @@ async function reverse(
   });
 }
 
+const signupGrantKey = (userId: string) => `signup_grant:${userId}`;
+
 /** Granted on first authenticated request, so a missing Clerk webhook cannot block an account. */
 export function grantSignupCredits(tx: Tx, a: { userId: string }) {
   return entry(tx, {
     userId: a.userId,
     type: "signup_grant",
     amount: env.SIGNUP_GRANT_CREDITS,
-    key: `signup_grant:${a.userId}`,
+    key: signupGrantKey(a.userId),
   });
+}
+
+/**
+ * Whether the signup grant has already been applied. This, not the presence of a `User` row, is
+ * what makes the account bootstrap idempotent: a row created by some other path is still ungranted,
+ * and a crash between the two writes is repaired on the next request.
+ */
+export async function hasSignupGrant(userId: string): Promise<boolean> {
+  const granted = await db.creditLedgerEntry.findUnique({
+    where: { idempotencyKey: signupGrantKey(userId) },
+    select: { id: true },
+  });
+
+  return granted !== null;
 }
 
 export function topUp(tx: Tx, a: { userId: string; amount: bigint; key: string }) {

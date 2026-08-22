@@ -2,19 +2,32 @@ import type { z } from "zod";
 import type { Logger } from "@/lib/logger";
 import type { WaitpointKind } from "@/contracts";
 
+export type NodeRunRequest = {
+  nodeType: string;
+  subModelId?: string;
+  input: unknown;
+  timeoutMs?: number;
+};
+
 /**
  * What a tool is given at execution time.
  *
- * INVARIANT: a tool that starts remote work must call `recordExternalRef` with the provider's id
- * BEFORE waiting on it, so a restarted attempt resumes that work instead of paying for a second
- * copy.
+ * INVARIANT: remote work goes through `runNode` and never through a direct call. It dispatches a
+ * durable child run keyed on this invocation, which checkpoints the provider's run id before
+ * polling — so a restarted attempt resumes that work instead of paying for a second copy, and the
+ * agent machine suspends between polls instead of holding a CPU.
+ *
+ * INVARIANT: a tool whose provider reports what it actually charged must pass that figure to
+ * `reportCost`, and only that figure. It is reconciled against the estimate, so a guess would move
+ * real credits. Providers that report nothing simply never call it and the estimate stands.
  */
 export type ToolCtx = {
   userId: string;
   chatId: string;
   runId: string;
   invocationId: string;
-  recordExternalRef: (externalId: string) => Promise<void>;
+  runNode: (request: NodeRunRequest) => Promise<{ output: unknown; creditUsed: bigint }>;
+  reportCost: (microcredits: bigint) => void;
   log: Logger;
 };
 

@@ -2,7 +2,6 @@ import { z } from "zod";
 import { env } from "@/lib/env";
 import { ToolError } from "@/lib/errors";
 import { defineTool } from "@/tools/define";
-import { runMagicaNode } from "@/tools/magica-client";
 import { estimateMicrocredits } from "@/tools/pricing";
 
 const NODE_TYPE = "gpt_image_2";
@@ -75,12 +74,13 @@ export const gptImage2 = defineTool({
     estimateMicrocredits(NODE_TYPE, { quality: input.quality, size: input.size }, input.n),
 
   execute: async (input, ctx) => {
-    const { output } = await runMagicaNode({
+    const { output, creditUsed } = await ctx.runNode({
       nodeType: NODE_TYPE,
       subModelId: SUB_MODEL_TEXT,
       input,
-      onRunId: ctx.recordExternalRef,
     });
+
+    ctx.reportCost(creditUsed);
 
     const images = extractImageUrls(output);
     if (images.length === 0) {

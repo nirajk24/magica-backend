@@ -4,7 +4,7 @@ import { ToolError } from "@/lib/errors";
 
 const TERMINAL = ["COMPLETED", "FAILED", "CANCELED"] as const;
 
-export const NodeRunStatus = z.enum([
+const NodeRunStatus = z.enum([
   "QUEUED",
   "RUNNING",
   "COMPLETED",
@@ -14,7 +14,7 @@ export const NodeRunStatus = z.enum([
 
 const RunAccepted = z.object({ runId: z.string().min(1) });
 
-export const NodeRun = z.object({
+const NodeRun = z.object({
   id: z.string(),
   status: NodeRunStatus,
   output: z.json().nullable().optional(),

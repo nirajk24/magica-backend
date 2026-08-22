@@ -135,6 +135,7 @@ magica-backend/
 │   │   ├── run-agent-turn.ts          Phase 1 — ★ the loop, plain fn with injected deps
 │   │   ├── turn-state.ts              Phase 1 — block accumulator: segments + stream offsets
 │   │   ├── magica-node-run.ts         Phase 1 — typed child task (poll loop)
+│   │   ├── tool-runtime.ts            Phase 1 — the wrapper's Postgres + credits half
 │   │   └── streams.ts                 Phase 1 — streams.define
 │   └── prompts/system.ts              Phase 1 (base) → Phase 3 (+ skill index)
 ├── tests/{unit,integration,acceptance,msw,fixtures}/
@@ -411,12 +412,13 @@ export const RunMetadata = z.object({
   phaseStartedAt: z.number(),                   // epoch ms → live duration counter
   currentStep: z.string().optional(),
   stepsCompleted: z.number(),
-  blocks: z.array(BlockProjection).max(40),     // ORDERED live narrative (gap 1). BOUNDED — dry-run F5:
-  blocksTruncated: z.number().optional(),       // metadata has its OWN size cap, smaller than the 3 MB
-                                                // PAYLOAD cap. Spike it. The FE holds full history from
-                                                // REST, so metadata only carries the live tail.
-  reasoningText: z.string().optional(),         // streaming Thinking row (gap 2)
-  activePlan: z.unknown().optional(),           // plan-progress card (gap 4)
+  blocks: z.array(BlockProjection).max(60),     // ORDERED live narrative (gap 1). Bound confirmed by
+                                                // the F5 spike (#50); the projection is sliced to the
+                                                // newest 60 because a rejected snapshot kills the turn.
+  reasoningText: z.string().max(4_000).optional(),  // streaming Thinking row (gap 2), bounded TAIL —
+                                                // metadata is re-sent whole on every delta (#50)
+  activePlan: z.json().optional(),              // plan-progress card (gap 4). z.json(), never
+                                                // z.unknown(): metadata.set() needs DeserializedJson
   invocations: z.array(z.object({
     id: z.string(), toolUseId: z.string(), toolName: z.string(),
     display: z.object({ label: z.string(), icon: z.string() }),
@@ -694,7 +696,8 @@ highest-risk logic — the cheapest place to be wrong.
 2  tools/{define,registry}, gpt_image_2, magica-client (against MSW)        DONE
 3  trigger/magica-node-run  + the resume-not-resubmit test                  DONE
 4  trigger/{turn-state,run-agent-turn}  with fake deps → block order + segment tests   DONE
-5  trigger/agent-turn shell + streams + tools/to-ai-sdk      <-- NEXT (first real agent run)
+5a tools/to-ai-sdk + trigger/{streams,tool-runtime}   the money path, proven on real PG   DONE
+5b trigger/agent-turn shell + prompts/system + toModelMessages   <-- NEXT (first real run)
 6  services + POST send + GET chat + GET active-run + GET chats + GET credits
 7  frontend (see its LLD Phase 1)
 ```
@@ -1049,6 +1052,46 @@ Every tool goes through the same wrapper. Tools stay pure; all persistence and m
 Step 4 before step 5 is the whole mid-turn-exhaustion story, and it means there is never a
 late-settle race.
 
+**BUILT (session 7). Four things the sketch did not say.**
+
+**Failures come back as data, not as exceptions.** `execute` returns
+`{ ok: true, data } | { ok: false, error, retryable }`. A blocked prompt is a normal path, so the
+model always has something readable to react to rather than depending on SDK error plumbing. Only
+`ToolError` and `AppError` copy passes through; a raw provider error becomes one generic sentence.
+
+**Bad arguments create no invocation row.** Parsing happens before the INSERT, so a call the model
+immediately self-corrects leaves no failed card on the timeline — which is what the reference does.
+
+**Remote work goes through the child task, and did not before.** `gpt_image_2` called
+`runMagicaNode` inline, so `magicaNodeRun` — and its resume-not-resubmit guard, and its four passing
+tests — had **zero callers**. A replayed step would have submitted to Magica a second time, paying
+twice out of a ~28-credit budget, and the agent machine held a CPU for the whole 120-second poll
+instead of suspending. Remote work is now `ctx.runNode`, implemented by `tool-runtime` as
+`magicaNodeRun.triggerAndWait(payload, { idempotencyKey: invocationId })`. Trigger.dev dedups the
+dispatch, the child's `magicaRunId` check dedups the submission — the two independent guards §4.1.4
+claims are finally both live. `ToolCtx.recordExternalRef` is gone: `runNode` is the one checkpointed
+path, and a second way to do it is a second way to get it wrong.
+
+**`ctx.reportCost` is how the real price gets out of a tool.** `runMagicaNode` returns `creditUsed`
+and the tool was discarding it, so `reconcileToolCharge` had no production caller either. The tool
+now reports it and `completeInvocation` reconciles, in its own transaction, swallowing an
+uncollectable shortfall (#51).
+
+#### 4.1.6a `trigger/tool-runtime.ts` — the effects half of that seam
+
+`toAiSdkTools` holds the ordering; this holds every effect it orders. `isRunActive`,
+`beginInvocation` (upsert on `(runId, toolUseId)`, so a replay reuses its row and
+`charge:{invocationId}` stays a stable key), `chargeEstimate` (charge + write the estimate onto the
+card in one transaction), `runNode`, `completeInvocation`, `failInvocation` (refund + zero the card).
+
+`publish` is injected rather than calling `metadata.set` directly, so the module runs outside a
+Trigger.dev run — which is what lets `tests/integration/tool-runtime.test.ts` drive the whole money
+path against real Postgres and MSW, replacing only the dispatch. It proves: estimate charged then
+settled to the provider's figure, a failed step refunded to the exact starting balance, **no Magica
+submission at all when the estimate cannot be charged**, no invocation on a cancelled run, one
+charge and one submission across a replay, and an uncollectable shortfall that stops at zero without
+failing the completed step. `balance === SUM(ledger)` after every one.
+
 **The window this leaves, stated plainly (dry-run F12):** `chargeTool` commits in its own short
 transaction; `execute` is a network call outside any transaction. Crash in between and the charge
 stands with no work done. This is **recovered, not prevented** — the retry reset path cancels and
@@ -1070,6 +1113,8 @@ action closes the window.
 |---|---|
 | unit | `runAgentTurn` with fakes: block order, `segment` increments on text→tool, MAX_TURNS cap, empty-stream retry, usage all-or-nothing, flush-before-suspend, no throw escapes |
 | unit | `turn-state`: segment breaks, stream offsets, reasoning never on the stream, 60-block cap |
+| unit | `to-ai-sdk`: the call order IS the assertion — charge before execute, nothing charged for work that never starts, failures as data, interaction tools have no `execute` |
+| integration | `tool-runtime` on real Postgres: charge→settle, refund on failure, no submission when unaffordable, replay charges once, shortfall stops at zero |
 | unit | credits: reserve→charge→refund invariant; double-charge is a no-op; negative balance impossible |
 | unit | `magica-client`: 202/401/403/429/timeout/FAILED mapping |
 | integration | send route: happy path, 409 on active run, 400 on bad model, 402 on no credits |

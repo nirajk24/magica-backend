@@ -16,7 +16,7 @@ const Tiered = z.object({
 });
 
 /** Mirrors the `cost` object in Magica's model catalog so a refresh is a straight copy. */
-export const CostModel = z.discriminatedUnion("type", [PerImage, PerMinute, Tiered]);
+const CostModel = z.discriminatedUnion("type", [PerImage, PerMinute, Tiered]);
 export type CostModel = z.infer<typeof CostModel>;
 
 const MICRO = 1_000_000;

@@ -33,3 +33,9 @@ at Phase 1). Read `LLD.md` §0 before adding anything.
 No inline comments. JSDoc only on exported module boundaries — one block saying what it does
 and any invariant a caller must not break. Strict TS and Zod schemas are the documentation.
 Reasons live in `docs/decisions.md`, not in the code.
+
+<!-- TRIGGER.DEV SKILLS START -->
+## Trigger.dev agent skills
+
+This project has Trigger.dev agent skills installed in `.claude/skills/`. Before writing or changing Trigger.dev code (background tasks, scheduled tasks, realtime, or chat.agent AI agents), load the most relevant skill: `trigger-authoring-chat-agent`.
+<!-- TRIGGER.DEV SKILLS END -->

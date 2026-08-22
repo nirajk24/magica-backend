@@ -21,8 +21,8 @@
     "db:studio": "prisma studio",
     "db:seed": "tsx prisma/seed.ts",
     "db:reset": "prisma migrate reset --force && pnpm db:seed",
-    "trigger:dev": "trigger.dev dev",
-    "trigger:deploy": "trigger.dev deploy"
+    "trigger:dev": "trigger dev",
+    "trigger:deploy": "trigger deploy"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

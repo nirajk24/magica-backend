@@ -29,6 +29,9 @@ export default defineConfig({
           include: ["tests/integration/**/*.test.ts"],
           environment: "node",
           setupFiles: ["tests/setup/env.ts", "tests/msw/setup.ts"],
+          // Set before dotenv runs, which does not override existing vars. Keeps the rate-limit
+          // test to a few round trips instead of eleven.
+          env: { SEND_RATE_PER_MINUTE: "3" },
           // Real Neon in us-east-1: ~270ms per round trip from here (measured, decision #46) and
           // several per transaction, so the 5s default fails healthy tests on latency alone.
           testTimeout: 30_000,

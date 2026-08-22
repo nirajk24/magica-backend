@@ -27,6 +27,17 @@ export const ApiErrorEnvelope = z.object({
 
 export const Ok = z.object({ ok: z.literal(true) });
 
+/**
+ * The kinds of interaction a turn can park on. Declared once and reused by run metadata, the
+ * active-run response, `WaitpointResolution`, the registry's `interaction` field and the
+ * `Waitpoint` table.
+ *
+ * Adding a kind is one entry here plus one variant in `WaitpointResolution`. The orchestrator is
+ * kind-agnostic.
+ */
+export const WaitpointKind = z.enum(["plan_approval", "questions"]);
+export type WaitpointKind = z.infer<typeof WaitpointKind>;
+
 /** Infrastructure probe, not a product surface: unauthenticated, and absent from architecture §3.4. */
 export const Health = z.object({
   ok: z.literal(true),
@@ -94,11 +105,7 @@ export const ActiveRun = z.object({
   assistantMessageId: z.string().nullable(),
   publicAccessToken: z.string(),
   pendingWaitpoint: z
-    .object({
-      id: z.string(),
-      kind: z.enum(["plan_approval", "questions"]),
-      payload: z.unknown(),
-    })
+    .object({ id: z.string(), kind: WaitpointKind, payload: z.json() })
     .nullable(),
 });
 

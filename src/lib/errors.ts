@@ -43,3 +43,20 @@ export function statusFor(code: ErrorCode): number {
 export function isUniqueViolation(e: unknown): boolean {
   return typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002";
 }
+
+/**
+ * A failure the model should see and react to, rather than an HTTP response. The tool wrapper
+ * feeds it back as a tool-result so the model can rephrase and continue.
+ *
+ * INVARIANT: `message` is safe to show a user and a model. Never construct one from a raw
+ * provider string or stack.
+ */
+export class ToolError extends Error {
+  constructor(
+    message: string,
+    readonly retryable = false,
+  ) {
+    super(message);
+    this.name = "ToolError";
+  }
+}

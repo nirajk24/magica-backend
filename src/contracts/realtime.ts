@@ -1,29 +1,22 @@
 import { z } from "zod";
 import { BlockProjection } from "@/contracts/blocks";
 import { InvocationStatus, ToolDisplay } from "@/contracts/messages";
+import { WaitpointKind } from "@/contracts/api";
 
 export const STREAM_AGENT_TEXT = "agent-text";
 
 export const RunPhase = z.enum(["thinking", "working", "waiting", "finalizing"]);
 
-/** Tail window for `RunMetadata.reasoningText`. The orchestrator slices to the last N chars. */
+/** Tail window the orchestrator slices `RunMetadata.reasoningText` to. */
 export const REASONING_TAIL_CHARS = 4_000;
 
 /**
- * Re-sent whole on every update, so nothing here may grow unbounded with turn length:
- * `blocks` is a structure-only projection and prose travels on the append-only text stream.
+ * Live view of a run, re-sent in full on every update — so every field must stay bounded.
+ * `blocks` carries structure only and `reasoningText` is a tail window; prose travels on the
+ * append-only text stream and the complete transcript is persisted as a `thinking` block.
  *
- * MEASURED (dry-run F5, closed): the cap is not the binding constraint. A worst-case snapshot —
- * 60 blocks, 12 invocations, long CDN urls — is ~20 KB and is accepted, and metadata as large as
- * 2 MB was accepted too. The real cost is re-send amplification: this object is written on every
- * delta, so an unbounded field is pushed again in full each time. That is why `reasoningText` is
- * a bounded TAIL and not the whole thinking transcript — the frontend only renders a live
- * streaming row, and the complete text is persisted as a `thinking` block and read back over
- * REST.
- *
- * Open fields are `z.json()`, never `z.unknown()`: this object is written through
- * `metadata.set()`, whose parameter type is JSON-serializable, so `unknown` fails to compile
- * at the one call site that matters.
+ * Open fields must be `z.json()`, not `z.unknown()` — `metadata.set()` requires
+ * JSON-serializable types.
  */
 export const RunMetadata = z.object({
   phase: RunPhase,
@@ -47,7 +40,7 @@ export const RunMetadata = z.object({
   ),
   assistantMessageId: z.string().optional(),
   waitpoint: z
-    .object({ id: z.string(), kind: z.string(), payload: z.json() })
+    .object({ id: z.string(), kind: WaitpointKind, payload: z.json() })
     .optional(),
   servedModel: z.string().optional(),
   tokenUsage: z

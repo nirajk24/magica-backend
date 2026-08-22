@@ -272,6 +272,25 @@ export async function cancelRun(a: {
 }
 
 /**
+ * Stops whatever turn is still holding a chat, if one is. A chat with nothing running is a no-op.
+ *
+ * Exists so deleting a chat does not leave a turn spending credits against something nobody can
+ * open. Ownership is checked the same way `cancelRun` checks it, by the run's own `userId`.
+ */
+export async function cancelActiveRunForChat(a: {
+  userId: string;
+  chatId: string;
+  log: Logger;
+}): Promise<void> {
+  const run = await db.agentRun.findFirst({
+    where: { chatId: a.chatId, userId: a.userId, status: { in: [...WRITABLE] } },
+    select: { id: true },
+  });
+
+  if (run) await cancelRun({ userId: a.userId, runId: run.id, log: a.log });
+}
+
+/**
  * Hands a run to Trigger.dev and returns everything the client needs to watch it.
  *
  * INVARIANT: the only path to `agentTurn.trigger`. Send and retry share it so the idempotency key,

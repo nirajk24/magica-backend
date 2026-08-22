@@ -1,4 +1,10 @@
-import { DEFAULT_MODEL_ID, type ChatDTO, type ChatsPage, type ChatsQuery } from "@/contracts";
+import {
+  DEFAULT_MODEL_ID,
+  type ChatDTO,
+  type ChatsPage,
+  type ChatsQuery,
+  type UpdateChat,
+} from "@/contracts";
 import { db } from "@/lib/db";
 import { AppError } from "@/lib/errors";
 
@@ -71,6 +77,63 @@ export async function createChat(a: {
   return toChatDTO(chat);
 }
 
+/**
+ * Renames a chat or pins it.
+ *
+ * INVARIANT: ownership is in the WHERE clause, so a chat the caller does not own is indistinguishable
+ * from one that does not exist. An empty patch is a no-op that still returns the current row.
+ *
+ * The rename does not touch `updatedAt`: the sidebar orders by real activity, and retitling a chat
+ * is not activity.
+ */
+export async function updateChat(a: {
+  userId: string;
+  chatId: string;
+  patch: UpdateChat;
+}): Promise<ChatDTO> {
+  const current = await db.chat.findFirst({
+    where: { id: a.chatId, userId: a.userId, deletedAt: null },
+    select: chatSelect,
+  });
+
+  if (!current) throw new AppError("NOT_FOUND", "That chat does not exist.");
+
+  // Carried forward explicitly. `updatedAt: undefined` reads as "not provided" and Prisma's
+  // `@updatedAt` bumps it anyway, which would reorder the sidebar and move a live cursor key.
+  const updated = await db.chat.update({
+    where: { id: a.chatId },
+    data: { ...a.patch, updatedAt: current.updatedAt },
+    select: chatSelect,
+  });
+
+  return toChatDTO(updated);
+}
+
+/**
+ * Soft-deletes a chat the caller owns.
+ *
+ * Soft, not erased: the ledger entries, invocations and assets its turns produced stay explainable,
+ * and every read already filters on `deletedAt`. Deleting twice is a no-op.
+ *
+ * INVARIANT: a run still holding this chat must be cancelled first, by the caller. The work would
+ * otherwise keep spending credits for a chat nobody can open.
+ */
+export async function deleteChat(a: { userId: string; chatId: string }): Promise<void> {
+  const { count } = await db.chat.updateMany({
+    where: { id: a.chatId, userId: a.userId, deletedAt: null },
+    data: { deletedAt: new Date() },
+  });
+
+  if (count === 0) {
+    const exists = await db.chat.findFirst({
+      where: { id: a.chatId, userId: a.userId },
+      select: { id: true },
+    });
+
+    if (!exists) throw new AppError("NOT_FOUND", "That chat does not exist.");
+  }
+}
+
 /** Opaque to the client: `(updatedAt, id)` is the composite the chat list index is built on. */
 function encodeCursor(row: { updatedAt: Date; id: string }): string {
   return Buffer.from(`${row.updatedAt.toISOString()}|${row.id}`).toString("base64url");
@@ -84,24 +147,37 @@ function decodeCursor(cursor: string): { updatedAt: Date; id: string } | null {
   return Number.isNaN(updatedAt.getTime()) ? null : { updatedAt, id };
 }
 
-/** Most recently touched first, which is the order the sidebar renders. */
+/**
+ * Most recently touched first, which is the order the sidebar renders.
+ *
+ * `search` covers titles **and** message content, as one `EXISTS` against the trigram index rather
+ * than a scan. The two conditions are `AND`ed as separate clauses because both need an `OR` of their
+ * own, and two `OR` keys in one Prisma filter silently keep the last.
+ */
 export async function listChats(a: { userId: string } & ChatsQuery): Promise<ChatsPage> {
   const after = a.cursor ? decodeCursor(a.cursor) : null;
+  const like = { contains: a.search ?? "", mode: "insensitive" } as const;
 
   const rows = await db.chat.findMany({
     where: {
       userId: a.userId,
       deletedAt: null,
       ...(a.filter === "pinned" ? { isFavorite: true } : {}),
-      ...(a.search ? { title: { contains: a.search, mode: "insensitive" } } : {}),
-      ...(after
-        ? {
-            OR: [
-              { updatedAt: { lt: after.updatedAt } },
-              { updatedAt: after.updatedAt, id: { lt: after.id } },
-            ],
-          }
-        : {}),
+      AND: [
+        ...(a.search
+          ? [{ OR: [{ title: like }, { messages: { some: { content: like } } }] }]
+          : []),
+        ...(after
+          ? [
+              {
+                OR: [
+                  { updatedAt: { lt: after.updatedAt } },
+                  { updatedAt: after.updatedAt, id: { lt: after.id } },
+                ],
+              },
+            ]
+          : []),
+      ],
     },
     orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
     take: a.limit + 1,

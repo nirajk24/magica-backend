@@ -1,5 +1,13 @@
-import { ContentBlock, type AssetDTO, type AttachmentDTO, type MessageDTO, type ToolInvocationDTO } from "@/contracts";
+import {
+  ContentBlock,
+  type AssetDTO,
+  type AttachmentDTO,
+  type Feedback,
+  type MessageDTO,
+  type ToolInvocationDTO,
+} from "@/contracts";
 import { db } from "@/lib/db";
+import { AppError } from "@/lib/errors";
 import { logger } from "@/lib/logger";
 import { getTool } from "@/tools/registry";
 
@@ -185,4 +193,28 @@ export async function listMessages(a: {
       ),
     nextCursor: rows.length > limit && oldest ? encodeCursor(oldest) : null,
   };
+}
+
+/**
+ * Records or clears a like on an assistant message the caller owns.
+ *
+ * INVARIANT: ownership travels through the chat in the WHERE clause, and a message that is not the
+ * caller's answers NOT_FOUND. Only an assistant message can be rated — there is nothing to tell us
+ * about the user's own words.
+ */
+export async function setMessageFeedback(a: {
+  userId: string;
+  messageId: string;
+  type: Feedback["type"];
+}): Promise<void> {
+  const { count } = await db.message.updateMany({
+    where: {
+      id: a.messageId,
+      role: "assistant",
+      chat: { userId: a.userId, deletedAt: null },
+    },
+    data: { feedback: a.type },
+  });
+
+  if (count === 0) throw new AppError("NOT_FOUND", "That message does not exist.");
 }

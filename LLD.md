@@ -1273,7 +1273,7 @@ own description.
 
 ---
 
-### Phase 5 — Tools 2–4 + chat management · ~4h · the widening
+### Phase 5 — Tools 2–4 + chat management · the widening · COMPLETE except `get_model_schema`
 
 Pure additive. **If any of this requires touching `run-agent-turn.ts`, stop — a seam is missing.**
 
@@ -1293,11 +1293,24 @@ Pure additive. **If any of this requires touching `run-agent-turn.ts`, stop — 
   `estimateMicrocredits` throws on an unpriced node, so without one a catalog outage turns every call
   to that tool into a failed turn instead of a charged one.
 - `get_model_schema` — cached per process; always render the duration (7 ms cache hit vs 3.7 s cold).
+  **Still outstanding, and possibly not wanted.** What the scope authority actually asks for is
+  *"resolve current input fields from the Magica model catalog/schema instead of duplicating a stale
+  provider schema"* — a statement about where **our** validation gets its fields, not about giving the
+  model a tool. A model-callable version spends one OpenRouter request per call against a 50/day cap,
+  which is what decision #42 exists to protect. The cheaper reading is to check a node's request
+  fields against the catalog we already fetch for pricing.
 - `GET /chats` with `?cursor&search&filter`; `PATCH`/`DELETE /chats/:id`; message pagination via
-  `messagesCursor`.
+  `messagesCursor` — **done**. Search covers titles **and message content** as one `EXISTS` against
+  the trigram index (the PDF requires both). `PATCH` carries `updatedAt` forward explicitly, or a
+  rename reorders the sidebar and moves a live cursor key; `DELETE` is a soft delete and cancels a
+  turn still holding the chat, in that order, because `cancelRun` scopes its lookup to a live chat.
+- `PATCH /messages/:id/feedback` — **done**, pulled forward from Phase 6. One route both ways:
+  `{type: null}` clears a rating, because clicking a filled thumb again is what the control implies.
 
-**DoD** — each tool succeeds live once; a chained conversation crops a generated image; invalid input
-produces a tool-error the model recovers from; chat list pages with no offset scan (check the plan).
+**DoD** — each tool succeeds live once ✅ (`merge_videos` excepted: it needs two real video urls) · a
+chained conversation crops a generated image ✅ · invalid input produces a tool-error the model
+recovers from ✅ · chat list pages with no offset scan ✅ · rename, pin, delete and rate are all
+ownership-scoped and answer NOT_FOUND to a stranger ✅.
 
 ---
 
@@ -1311,7 +1324,7 @@ Ordered by value per hour. Every item is independent.
 | 2 | Uploads: `/uploads/sign`, `/attachments`, quota | `attachmentIds` already validated; biggest single chunk |
 | 3 | Step-by-step + `update_step` | reads/writes `activePlan`; auto mode untouched |
 | 4 | Media library, files-in-task, attachment PATCH/DELETE | routes over an existing table |
-| 5 | `/messages/:id/feedback`, `/llm/status` | one column, one row |
+| 5 | ~~`/messages/:id/feedback`, `/llm/status`~~ — both done earlier | one column, one row |
 
 ---
 

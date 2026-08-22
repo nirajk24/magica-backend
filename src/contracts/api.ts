@@ -125,13 +125,6 @@ export const ActiveRun = z.object({
     .nullable(),
 });
 
-/**
- * What a client may submit to `POST /waitpoints/:id/resolve`.
- *
- * INVARIANT: `{ expired: true }` is not in here. It is written by the server when a token times out
- * or a run is cancelled, and accepting it from a client would let one expire its own overlay
- * through a path that skips the timeout.
- */
 export const PlanApprovalResolution = z.object({
   kind: z.literal("plan_approval"),
   approved: z.boolean(),
@@ -148,6 +141,13 @@ export const QuestionsResolution = z.object({
 /** Written by the server when a token times out or its run is cancelled. */
 export const WaitpointExpired = z.object({ expired: z.literal(true) });
 
+/**
+ * What a client may submit to `POST /waitpoints/:id/resolve`.
+ *
+ * INVARIANT: `{ expired: true }` is not in here. It is written by the server when a token times out
+ * or a run is cancelled, and accepting it from a client would let one expire its own overlay
+ * through a path that skips the timeout.
+ */
 export const ResolveWaitpoint = z.discriminatedUnion("kind", [
   PlanApprovalResolution,
   QuestionsResolution,
@@ -229,6 +229,9 @@ export const UpdateChat = z.object({
   isFavorite: z.boolean().optional(),
 });
 
+/** What a mutation on one chat answers with: the row as it now stands. */
+export const ChatResponse = z.object({ chat: ChatDTO });
+
 export const CreditsPage = z.object({
   balance: z.string(),
   entries: z.array(
@@ -282,3 +285,7 @@ export type TopUp = z.infer<typeof TopUp>;
 export type TopUpResult = z.infer<typeof TopUpResult>;
 export type ModelId = z.infer<typeof ModelId>;
 export type Health = z.infer<typeof Health>;
+export type Ok = z.infer<typeof Ok>;
+export type UpdateChat = z.infer<typeof UpdateChat>;
+export type Feedback = z.infer<typeof Feedback>;
+export type ChatResponse = z.infer<typeof ChatResponse>;

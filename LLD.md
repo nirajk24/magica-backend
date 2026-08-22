@@ -702,7 +702,6 @@ highest-risk logic — the cheapest place to be wrong.
 5b trigger/agent-turn shell + prompts/system + turn.service + llm adapter   DONE (builds
    on a live worker; the first real model call belongs with step 6's send route)
 6  services + POST send + GET chat + GET active-run + GET chats + GET credits   <-- NEXT
-6  services + POST send + GET chat + GET active-run + GET chats + GET credits
 7  frontend (see its LLD Phase 1)
 ```
 

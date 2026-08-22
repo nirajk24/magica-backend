@@ -50,7 +50,6 @@
     "eslint": "^9.0.0",
     "eslint-config-next": "^16.3.2",
     "msw": "^2.15.0",
-    "pino-pretty": "^13.0.0",
     "prisma": "^7.9.1",
     "trigger.dev": "4.5.12",
     "tsx": "^4.23.12",

@@ -33,9 +33,12 @@ at Phase 1). Read `LLD.md` §0 before adding anything.
 - **`pnpm check:wiring` at the end of every step.** It lists exports reached only from tests, and
   fails on exports reached from nowhere. A module with passing tests and no caller is not finished.
   Account for every line: either it is the next step's work, or it is a wiring bug.
-- **After any migration, `pnpm db:generate`.** `migrate dev` syncs the database but leaves the
-  generated client describing the old schema, so the next query sends a column that no longer
-  exists. `tests/integration/schema.test.ts` asserts the shape the code depends on.
+- **After any migration: `pnpm db:generate`, then restart anything already running.** `migrate dev`
+  syncs the database but leaves the generated client describing the old schema, so the next query
+  names a column that does not exist. A running `pnpm dev` will not pick up the new client either —
+  `@prisma/client` is in `serverExternalPackages`, so it is held in Node's module cache from boot and
+  survives hot reload. The symptom is a generic `INTERNAL` 500 from a route that has not changed.
+  `tests/integration/schema.test.ts` asserts the shape the code depends on.
 - **Raw-SQL migrations:** partial unique indexes are hand-written because Prisma cannot
   express a `WHERE` clause. Verified safe — `migrate dev` leaves them alone. Anything Prisma
   *can* express (including GIN with `gin_trgm_ops`) must be declared in the schema, or the

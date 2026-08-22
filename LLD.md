@@ -130,12 +130,14 @@ magica-backend/
 │   │   ├── submit-plan.ts             Phase 4
 │   │   ├── ask-questions.ts           Phase 6
 │   │   └── update-step.ts             Phase 6
-│   ├── trigger/
-│   │   ├── agent-turn.ts              Phase 1 — 3-line task shell
+│   ├── agent/                        NOT under trigger/: see the note below
 │   │   ├── run-agent-turn.ts          Phase 1 — ★ the loop, plain fn with injected deps
 │   │   ├── turn-state.ts              Phase 1 — block accumulator: segments + stream offsets
+│   │   ├── llm.ts                     Phase 1 — OpenRouter + streamText + part mapping
+│   │   └── tool-runtime.ts            Phase 1 — the wrapper's Postgres + credits half
+│   ├── trigger/                       task definitions ONLY — this dir is what Trigger scans
+│   │   ├── agent-turn.ts              Phase 1 — the task shell, binds every seam
 │   │   ├── magica-node-run.ts         Phase 1 — typed child task (poll loop)
-│   │   ├── tool-runtime.ts            Phase 1 — the wrapper's Postgres + credits half
 │   │   └── streams.ts                 Phase 1 — streams.define
 │   └── prompts/system.ts              Phase 1 (base) → Phase 3 (+ skill index)
 ├── tests/{unit,integration,acceptance,msw,fixtures}/
@@ -697,7 +699,9 @@ highest-risk logic — the cheapest place to be wrong.
 3  trigger/magica-node-run  + the resume-not-resubmit test                  DONE
 4  trigger/{turn-state,run-agent-turn}  with fake deps → block order + segment tests   DONE
 5a tools/to-ai-sdk + trigger/{streams,tool-runtime}   the money path, proven on real PG   DONE
-5b trigger/agent-turn shell + prompts/system + toModelMessages   <-- NEXT (first real run)
+5b trigger/agent-turn shell + prompts/system + turn.service + llm adapter   DONE (builds
+   on a live worker; the first real model call belongs with step 6's send route)
+6  services + POST send + GET chat + GET active-run + GET chats + GET credits   <-- NEXT
 6  services + POST send + GET chat + GET active-run + GET chats + GET credits
 7  frontend (see its LLD Phase 1)
 ```
@@ -1302,6 +1306,35 @@ A reviewer will pick from this list.
     and is perfectly healthy. Ask Trigger.dev.
 
 ---
+
+### Why the agent lives in `src/agent/`, not `src/trigger/`
+
+`dirs: ["./src/trigger"]` makes Trigger.dev build **every** file in that directory as its own entry
+point, whether or not it exports a task. Keeping the loop, the accumulator, the adapter and the tool
+runtime there meant four extra bundle entry points for nothing, and the directory stopped telling
+you what was actually a task. `src/trigger/` is now task definitions only; the implementation they
+bind sits in `src/agent/`.
+
+### The pino transport that breaks the task build (session 7, cost an hour)
+
+`pino({ transport: { target: "pino-pretty" } })` runs the transport in a **worker thread**, which the
+runtime resolves from `pino/lib/worker.js`. That path does not exist inside Trigger.dev's flattened
+bundle, so any task whose import graph reaches the logger fails to build — and the only symptom is:
+
+```
+Error: Build failed: Uncaught exception:
+Cannot find module '<buildDir>/lib/worker.js'
+```
+
+Nothing in that message mentions pino, the task files all compile and are emitted, and `tsc`,
+`eslint`, `next build` and 143 tests are all green. It is only reproducible through
+`pnpm trigger:dev`. The logger now emits plain JSON with no transport; both places these logs are
+read — the Trigger.dev dashboard and Vercel — parse JSON anyway.
+
+**The general lesson, which is the reusable part:** a task's whole import graph is executed at index
+time, so anything that spawns a thread or a subprocess at module scope breaks the build rather than
+the run. `pnpm trigger:dev` is the only check that catches it, and it belongs in every phase's DoD
+from here.
 
 ## 7. Traps that have already cost other people hours
 

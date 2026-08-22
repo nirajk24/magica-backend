@@ -24,6 +24,12 @@ at Phase 1). Read `LLD.md` §0 before adding anything.
   with database-level defaults, so raw-SQL inserts and CDC both work.
 - **Two deploys, every time:** `pnpm build` (Vercel) does not ship tasks. Run
   `pnpm trigger:deploy` as well or the deployed tasks are stale.
+- **`pnpm trigger:dev` must boot at the end of every step that touches `src/trigger/` or anything
+  it imports.** A task's entire import graph runs at index time, so a module that spawns a thread at
+  import — a pino transport is the one that bit us — fails the *build* with a message naming nothing
+  relevant, while `tsc`, `eslint`, `next build` and the whole test suite stay green.
+- **`src/trigger/` holds task definitions only.** Trigger builds every file in it as an entry point;
+  the agent implementation lives in `src/agent/`.
 - **`pnpm check:wiring` at the end of every step.** It lists exports reached only from tests, and
   fails on exports reached from nowhere. A module with passing tests and no caller is not finished —
   that pattern has already shipped three times here. Account for every line: either it is the next

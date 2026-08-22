@@ -42,3 +42,7 @@ pnpm-debug.log*
 
 # vercel
 .vercel
+
+# agent tooling (local only)
+.claude/
+CLAUDE.md

@@ -17,12 +17,16 @@ at Phase 1). Read `LLD.md` §0 before adding anything.
 - **Extension points are the registries.** Adding a tool, skill, or waitpoint kind is one
   entry. If a feature needs an edit to `trigger/run-agent-turn.ts`, the seam is missing —
   add the seam instead.
-- **Credits are `BigInt` in Prisma and `string` on the wire.** `JSON.stringify` throws on a
-  BigInt and `Number()` loses precision. One conversion point, in `message.service.ts`.
+- **Credits are `BigInt` in Prisma and `string` on the wire.** `Number()` loses precision, so
+  every DTO declares a string. One conversion point, in `message.service.ts`; `lib/api.ts`
+  serializes any BigInt that slips past it rather than letting `JSON.stringify` throw a 500.
 - **Every `DateTime` is `@db.Timestamptz(3)`** and every table has `createdAt` + `updatedAt`
   with database-level defaults, so raw-SQL inserts and CDC both work.
 - **Two deploys, every time:** `pnpm build` (Vercel) does not ship tasks. Run
   `pnpm trigger:deploy` as well or the deployed tasks are stale.
+- **After any migration, `pnpm db:generate`.** `migrate dev` syncs the database but leaves the
+  generated client describing the old schema, so the next query sends a column that no longer
+  exists. `tests/integration/schema.test.ts` asserts the shape the code depends on.
 - **Raw-SQL migrations:** partial unique indexes are hand-written because Prisma cannot
   express a `WHERE` clause. Verified safe — `migrate dev` leaves them alone. Anything Prisma
   *can* express (including GIN with `gin_trgm_ops`) must be declared in the schema, or the
@@ -34,8 +38,4 @@ No inline comments. JSDoc only on exported module boundaries — one block sayin
 and any invariant a caller must not break. Strict TS and Zod schemas are the documentation.
 Reasons live in `docs/decisions.md`, not in the code.
 
-<!-- TRIGGER.DEV SKILLS START -->
-## Trigger.dev agent skills
-
-This project has Trigger.dev agent skills installed in `.claude/skills/`. Before writing or changing Trigger.dev code (background tasks, scheduled tasks, realtime, or chat.agent AI agents), load the most relevant skill: `trigger-authoring-chat-agent`.
-<!-- TRIGGER.DEV SKILLS END -->
+<!-- TRIGGER.DEV SKILLS START --><!-- TRIGGER.DEV SKILLS END -->

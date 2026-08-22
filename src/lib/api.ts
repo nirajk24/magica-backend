@@ -10,6 +10,7 @@ type RouteContext<TBody, TQuery> = {
   body: TBody;
   query: TQuery;
   params: Record<string, string>;
+  headers: Headers;
   traceId: string;
   log: Logger;
 };
@@ -135,6 +136,7 @@ export function defineRoute<TBody = undefined, TQuery = undefined, TOut = unknow
         body: opts.body ? await parseBody(req, opts.body) : (undefined as TBody),
         query: opts.query ? parseQuery(req, opts.query) : (undefined as TQuery),
         params: (await segment?.params) ?? {},
+        headers: req.headers,
         traceId,
         log,
       });
@@ -154,6 +156,7 @@ export function definePublicRoute<TQuery = undefined, TOut = unknown>(
         body: undefined,
         query: opts.query ? parseQuery(req, opts.query) : (undefined as TQuery),
         params: (await segment?.params) ?? {},
+        headers: req.headers,
         traceId,
         log,
       }),

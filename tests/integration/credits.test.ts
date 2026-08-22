@@ -70,6 +70,66 @@ describe("credits ledger", () => {
     );
   });
 
+  it("holds and returns an admission on every attempt, not just the first", async () => {
+    const runId = uuidv7();
+    const start = 10_000_000n;
+
+    const first = await db.$transaction((tx) =>
+      reserveAdmission(tx, { userId, runId, attempt: 1 }),
+    );
+    expect(first, "attempt 1 applied").toBe(true);
+    expect(await expectInvariant(userId)).toBe(start - ADMISSION);
+
+    await db.$transaction((tx) => refundAdmission(tx, { userId, runId }));
+    expect(await expectInvariant(userId)).toBe(start);
+
+    const second = await db.$transaction((tx) =>
+      reserveAdmission(tx, { userId, runId, attempt: 2 }),
+    );
+    expect(second, "a retry must take a real hold, or it can never be refused for credits").toBe(
+      true,
+    );
+    expect(await expectInvariant(userId), "the hold actually moved the balance").toBe(
+      start - ADMISSION,
+    );
+
+    // The mirror half: the retry's terminal refund must fire, and must not re-refund attempt 1.
+    await db.$transaction((tx) => refundAdmission(tx, { userId, runId }));
+    expect(await expectInvariant(userId), "one turn, two attempts, nothing left held").toBe(start);
+
+    const rows = await db.creditLedgerEntry.findMany({
+      where: { runId },
+      select: { idempotencyKey: true },
+      orderBy: { idempotencyKey: "asc" },
+    });
+    expect(rows.map((r) => r.idempotencyKey)).toEqual([
+      `refund:reserve:${runId}:1`,
+      `refund:reserve:${runId}:2`,
+      `reserve:${runId}:1`,
+      `reserve:${runId}:2`,
+    ]);
+  });
+
+  it("refunds a hold written under the pre-attempt key format", async () => {
+    const runId = uuidv7();
+    const start = 10_000_000n;
+
+    // What every run created before the key carried an attempt looks like on disk.
+    await db.$executeRaw`
+      INSERT INTO "CreditLedgerEntry" ("id", "userId", "type", "amount", "idempotencyKey", "runId")
+      VALUES (${uuidv7()}, ${userId}, 'reserve'::"LedgerEntryType", ${-ADMISSION}, ${`reserve:${runId}`}, ${runId})`;
+    await db.$executeRaw`
+      UPDATE "User" SET "creditBalance" = "creditBalance" - ${ADMISSION} WHERE "id" = ${userId}`;
+    expect(await expectInvariant(userId)).toBe(start - ADMISSION);
+
+    await db.$transaction((tx) => refundAdmission(tx, { userId, runId }));
+
+    expect(
+      await expectInvariant(userId),
+      "reading the ledger rather than rebuilding a key is what makes this work",
+    ).toBe(start);
+  });
+
   it("treats a replayed charge as a no-op instead of charging twice", async () => {
     const runId = uuidv7();
     const invocationId = uuidv7();

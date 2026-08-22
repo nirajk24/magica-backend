@@ -37,7 +37,7 @@ const defaultSleep: Sleep = (ms) => new Promise((resolve) => setTimeout(resolve,
 const POLL_INTERVAL_MS = 6_000;
 
 /** Long enough for an image; a slower node type passes its own budget. */
-export const DEFAULT_POLL_TIMEOUT_MS = 120_000;
+const DEFAULT_POLL_TIMEOUT_MS = 120_000;
 
 function headers() {
   return {

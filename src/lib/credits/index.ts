@@ -58,29 +58,55 @@ async function entry(tx: Tx, { userId, type, amount, key, runId, invocationId }:
 }
 
 /**
- * Fixed hold taken when a turn is admitted. Call inside the send route's transaction so a
- * rejected send leaves no trace.
+ * Fixed hold taken when a turn is admitted. Call inside the admitting transaction so a rejected
+ * send leaves no trace.
+ *
+ * INVARIANT: the key carries the attempt. A retry reuses its run row, so a key of `reserve:{runId}`
+ * alone reads as already applied and the second attempt would run holding nothing — and therefore
+ * could never be refused for insufficient credits.
  *
  * INVARIANT: always refunded in full at terminal, so the net cost of a turn is the sum of its
  * tool charges.
  */
-export function reserveAdmission(tx: Tx, a: { userId: string; runId: string }) {
+export function reserveAdmission(
+  tx: Tx,
+  a: { userId: string; runId: string; attempt?: number },
+) {
   return entry(tx, {
     userId: a.userId,
     type: "reserve",
     amount: -env.ADMISSION_CREDITS,
-    key: `reserve:${a.runId}`,
+    key: `reserve:${a.runId}:${a.attempt ?? 1}`,
     runId: a.runId,
   });
 }
 
-export function refundAdmission(tx: Tx, a: { userId: string; runId: string }) {
-  return reverse(tx, {
-    userId: a.userId,
-    chargedKey: `reserve:${a.runId}`,
-    refundKey: `refund:reserve:${a.runId}`,
-    runId: a.runId,
+/**
+ * Returns every admission hold a run has taken, whichever attempt took it.
+ *
+ * INVARIANT: the holds are read from the ledger rather than rebuilt from a key, so a run that was
+ * retried cannot leave one behind, and a hold taken under an older key format still comes back.
+ */
+export async function refundAdmission(tx: Tx, a: { userId: string; runId: string }) {
+  const holds = await tx.creditLedgerEntry.findMany({
+    where: { userId: a.userId, runId: a.runId, type: "reserve" },
+    select: { idempotencyKey: true },
   });
+
+  let refunded = false;
+
+  for (const hold of holds) {
+    const applied = await reverse(tx, {
+      userId: a.userId,
+      chargedKey: hold.idempotencyKey,
+      refundKey: `refund:${hold.idempotencyKey}`,
+      runId: a.runId,
+    });
+
+    refunded = refunded || applied;
+  }
+
+  return refunded;
 }
 
 /**

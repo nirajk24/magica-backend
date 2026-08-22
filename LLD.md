@@ -1344,6 +1344,11 @@ from here.
 | 10 concurrent realtime connections (free tier) | dropped subscriptions | close on unmount; one browser tab for the demo |
 | Trigger.dev env vars set to only the obvious three | **every** task crashes at boot with a Zod error | tasks import `lib/db.ts` → `lib/env.ts`, which parses the **whole** schema at import. The dashboard needs every non-optional variable — including `DATABASE_URL_UNPOOLED` and `FRONTEND_URL`, which a task never uses |
 | `prisma generate` in `postinstall` reading config through Prisma's `env()` | `pnpm install` fails on a fresh clone with no `.env` | `prisma.config.ts` resolves the URL permissively; `lib/env.ts` is what fails by name, at app boot |
+| A ledger idempotency key that omits the attempt | a retried turn holds **no** admission and can never be refused for credits | `reserve:{runId}:{attempt}`. A retry reuses its run row, so a key of `reserve:{runId}` alone reads as already applied and the second hold silently no-ops |
+| Rebuilding a refund key instead of reading the ledger | a hold taken under one key format is never returned | `refundAdmission` reads the run's `reserve` rows and reverses each, so it cannot disagree with what was actually held |
+| `undefined` in a Prisma update for a `Json?` column | means "leave unchanged", so a reset keeps the previous attempt's output | `Prisma.DbNull` writes SQL NULL; `Prisma.JsonNull` writes the JSON literal `null`, which readers then have to special-case |
+| Judging a suspended run by its age | a healthy run parked on a waitpoint is declared dead, refunded, and a second turn admitted beside it | never infer liveness from a timestamp. Age is only consulted when `triggerRunId IS NULL` — there is nothing to ask about. Otherwise ask Trigger.dev, and treat the call *failing* as "still alive" |
+| `pnpm check:wiring` reporting a same-file export as test-only | reads as a wiring bug when the function has real callers in its own module | the checker counts cross-file references. Confirm by grep before acting on it |
 
 ---
 

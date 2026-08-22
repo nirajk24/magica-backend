@@ -3,6 +3,7 @@ import { chargeTool, reconcileToolCharge, refundToolCharge } from "@/lib/credits
 import { db } from "@/lib/db";
 import { AppError, ToolError } from "@/lib/errors";
 import type { Logger } from "@/lib/logger";
+import { assetsFromInvocation } from "@/tools/assets";
 import { getTool } from "@/tools/registry";
 import type { ToolRuntime, TurnContext } from "@/tools/to-ai-sdk";
 import { magicaNodeRun } from "@/trigger/magica-node-run";
@@ -21,23 +22,29 @@ async function projectInvocations(runId: string): Promise<Invocations> {
       toolUseId: true,
       toolName: true,
       status: true,
+      output: true,
       creditUsed: true,
       startedAt: true,
       completedAt: true,
     },
   });
 
-  return rows.map((row) => ({
-    id: row.id,
-    toolUseId: row.toolUseId,
-    toolName: row.toolName,
-    display: getTool(row.toolName)?.display ?? { label: row.toolName, icon: "tool" },
-    state: row.status,
-    credits: row.creditUsed.toString(),
-    ...(row.startedAt && row.completedAt
-      ? { durationMs: row.completedAt.getTime() - row.startedAt.getTime() }
-      : {}),
-  }));
+  return rows.map((row) => {
+    const urls = assetsFromInvocation(row).map((asset) => asset.url);
+
+    return {
+      id: row.id,
+      toolUseId: row.toolUseId,
+      toolName: row.toolName,
+      display: getTool(row.toolName)?.display ?? { label: row.toolName, icon: "tool" },
+      state: row.status,
+      credits: row.creditUsed.toString(),
+      ...(urls.length > 0 ? { resultUrls: urls } : {}),
+      ...(row.startedAt && row.completedAt
+        ? { durationMs: row.completedAt.getTime() - row.startedAt.getTime() }
+        : {}),
+    };
+  });
 }
 
 /**

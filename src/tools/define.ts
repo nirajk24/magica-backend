@@ -1,6 +1,6 @@
 import type { z } from "zod";
 import type { Logger } from "@/lib/logger";
-import type { WaitpointKind } from "@/contracts";
+import type { AssetDTO, WaitpointKind } from "@/contracts";
 
 export type NodeRunRequest = {
   nodeType: string;
@@ -31,6 +31,9 @@ export type ToolCtx = {
   log: Logger;
 };
 
+/** The media a tool produced, before the orchestrator attaches cost and attribution. */
+export type MediaRef = { url: string; type: AssetDTO["type"] };
+
 export type AgentTool<I extends z.ZodType = z.ZodType, O extends z.ZodType = z.ZodType> = {
   name: string;
   description: string;
@@ -41,6 +44,11 @@ export type AgentTool<I extends z.ZodType = z.ZodType, O extends z.ZodType = z.Z
   output: O;
   credits: (input: z.infer<I>) => bigint;
   execute?: (input: z.infer<I>, ctx: ToolCtx) => Promise<z.infer<O>>;
+  /**
+   * Pulls the media out of this tool's own output. Only the tool knows its output shape, so a tool
+   * that produces files declares this and nothing in the orchestrator reads `output` directly.
+   */
+  assets?: (output: z.infer<O>) => MediaRef[];
 };
 
 /**

@@ -18,21 +18,26 @@ const Size = z.enum([
   "2160x3840",
 ]);
 
-/**
- * Defaults to Low outside demo mode, diverging from the catalog's High. The tiers differ by 36x,
- * so a High default spends the account's budget on development runs. An explicit request for High
- * is still honoured.
- */
-const defaultQuality = () => (env.DEMO_MODE ? "High" : "Low");
+const Quality = z.enum(["High", "Medium", "Low"]);
 
-const Input = z.object({
-  prompt: z.string().min(1).max(4000),
-  size: Size.default("Auto"),
-  quality: z.enum(["High", "Medium", "Low"]).default(defaultQuality),
-  background: z.enum(["Auto", "Opaque"]).default("Auto"),
-  n: z.number().int().min(1).max(4).default(1),
-  output_format: z.enum(["PNG", "JPEG", "WebP"]).default("PNG"),
-});
+/**
+ * Quality is clamped to Low outside demo mode, not merely defaulted to it. The tiers span 36x, and a
+ * default is only a default — the model asks for Medium unprompted, which costs 9x Low. Clamping at
+ * parse time means the estimate and the request cannot disagree.
+ */
+const clampQuality = (quality: z.infer<typeof Quality>) =>
+  env.DEMO_MODE ? quality : ("Low" as const);
+
+const Input = z
+  .object({
+    prompt: z.string().min(1).max(4000),
+    size: Size.default("Auto"),
+    quality: Quality.default(() => (env.DEMO_MODE ? "High" : "Low")),
+    background: z.enum(["Auto", "Opaque"]).default("Auto"),
+    n: z.number().int().min(1).max(4).default(1),
+    output_format: z.enum(["PNG", "JPEG", "WebP"]).default("PNG"),
+  })
+  .transform((input) => ({ ...input, quality: clampQuality(input.quality) }));
 
 const Output = z.object({ images: z.array(z.string().url()).min(1) });
 
@@ -72,6 +77,8 @@ export const gptImage2 = defineTool({
 
   credits: (input) =>
     estimateMicrocredits(NODE_TYPE, { quality: input.quality, size: input.size }, input.n),
+
+  assets: (output) => output.images.map((url) => ({ url, type: "image" as const })),
 
   execute: async (input, ctx) => {
     const { output, creditUsed } = await ctx.runNode({

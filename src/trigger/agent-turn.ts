@@ -23,13 +23,13 @@ export const agentTurn = task({
   id: "agent-turn",
   retry: { maxAttempts: 1 },
   maxDuration: 900,
-  run: async ({ runId }: AgentTurnPayload): Promise<AgentTurnResult> => {
-    const log = bindContext(logger, { runId });
+  run: async ({ runId }: AgentTurnPayload, { ctx }): Promise<AgentTurnResult> => {
+    const log = bindContext(logger, { runId, processId: ctx.run.id });
 
     // Priced from the live catalog before the first estimate; on failure the committed table stands.
     await ensureCatalogPricing();
 
-    const turn = await loadTurn(runId);
+    const turn = await loadTurn(runId, ctx.run.id);
     const turnLog = bindContext(log, {
       chatId: turn.chatId,
       messageId: turn.assistantMessageId,

@@ -1,9 +1,10 @@
 import type { Prisma } from "@/generated/prisma/client";
-import type { ContentBlock } from "@/contracts";
+import type { AssetDTO, ContentBlock } from "@/contracts";
 import { refundAdmission } from "@/lib/credits";
 import { db } from "@/lib/db";
 import { isUniqueViolation } from "@/lib/errors";
 import type { HistoryMessage } from "@/prompts/system";
+import { assetsFromInvocation } from "@/tools/assets";
 
 /** Messages sent to the model. Bounded so prompt size cannot grow with the length of a chat. */
 const HISTORY_LIMIT = 20;
@@ -54,8 +55,11 @@ async function bootstrapAssistantMessage(a: { runId: string; chatId: string }): 
   }
 }
 
-/** Everything the turn needs to start. Marks the run `running` on the way through. */
-export async function loadTurn(runId: string): Promise<LoadedTurn> {
+/**
+ * Everything the turn needs to start. Marks the run `running` on the way through, and records
+ * `triggerRunId` in case the send route died between dispatching and writing it.
+ */
+export async function loadTurn(runId: string, triggerRunId?: string): Promise<LoadedTurn> {
   const run = await db.agentRun.findUniqueOrThrow({
     where: { id: runId },
     select: { userId: true, chatId: true, chat: { select: { modelId: true } } },
@@ -77,7 +81,7 @@ export async function loadTurn(runId: string): Promise<LoadedTurn> {
 
   await db.agentRun.updateMany({
     where: { id: runId, status: { in: [...WRITABLE] } },
-    data: { status: "running", assistantMessageId },
+    data: { status: "running", assistantMessageId, ...(triggerRunId ? { triggerRunId } : {}) },
   });
 
   return {
@@ -102,13 +106,23 @@ export async function persistTurnBlocks(a: {
   });
 }
 
-async function creditsSpent(runId: string): Promise<bigint> {
-  const { _sum } = await db.toolInvocation.aggregate({
+/**
+ * What the run produced and what it cost, from its completed invocations.
+ *
+ * Assets are read back rather than accumulated in memory so a resumed attempt persists the same set
+ * a fresh one would, and each tool's own registry entry decides what counts as a file.
+ */
+async function completedWork(runId: string): Promise<{ creditUsed: bigint; assets: AssetDTO[] }> {
+  const invocations = await db.toolInvocation.findMany({
     where: { runId, status: "completed" },
-    _sum: { creditUsed: true },
+    orderBy: { createdAt: "asc" },
+    select: { toolName: true, toolUseId: true, output: true, creditUsed: true },
   });
 
-  return _sum.creditUsed ?? 0n;
+  return {
+    creditUsed: invocations.reduce((total, invocation) => total + invocation.creditUsed, 0n),
+    assets: invocations.flatMap(assetsFromInvocation),
+  };
 }
 
 /**
@@ -127,7 +141,7 @@ async function finalizeTurn(a: {
   tokenUsage: { inputTokens: number; outputTokens: number } | null;
   failureReason?: string;
 }): Promise<void> {
-  const creditUsed = await creditsSpent(a.runId);
+  const { creditUsed, assets } = await completedWork(a.runId);
 
   await db.$transaction(async (tx) => {
     await tx.message.update({
@@ -137,6 +151,7 @@ async function finalizeTurn(a: {
         contentBlocks: asJson(a.blocks),
         content: textOf(a.blocks),
         creditUsed,
+        assets: assets.length > 0 ? (assets as unknown as Prisma.InputJsonValue) : undefined,
         tokenUsage: a.tokenUsage ?? undefined,
         errorMessage: a.failureReason ?? null,
       },

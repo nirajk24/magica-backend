@@ -179,6 +179,70 @@ describe("completeTurn", () => {
   });
 });
 
+describe("assets", () => {
+  it("carries a completed tool's files onto the message the client reads", async () => {
+    const { runId, userId } = await seedRun();
+    const turn = await loadTurn(runId);
+
+    await db.toolInvocation.create({
+      data: {
+        runId,
+        toolUseId: "call_1",
+        toolName: "gpt_image_2",
+        status: "completed",
+        input: {},
+        output: { images: ["https://cdn.magica.com/fixtures/mountain.png"] },
+        creditUsed: 5_880n,
+      },
+    });
+
+    await completeTurn({
+      runId,
+      userId,
+      messageId: turn.assistantMessageId,
+      blocks,
+      tokenUsage: null,
+    });
+
+    const message = await db.message.findUniqueOrThrow({
+      where: { id: turn.assistantMessageId },
+    });
+
+    expect(
+      message.assets,
+      "the url lives in the invocation output; without this the client shows no image",
+    ).toEqual([
+      {
+        url: "https://cdn.magica.com/fixtures/mountain.png",
+        type: "image",
+        model: "gpt_image_2",
+        creditUsed: "5880",
+        toolCallId: "call_1",
+      },
+    ]);
+    expect(message.creditUsed, "and the spend is summed from the same invocations").toBe(5_880n);
+  });
+
+  it("leaves assets untouched for a turn that produced no files", async () => {
+    const { runId, userId } = await seedRun();
+    const turn = await loadTurn(runId);
+
+    await completeTurn({
+      runId,
+      userId,
+      messageId: turn.assistantMessageId,
+      blocks,
+      tokenUsage: null,
+    });
+
+    const message = await db.message.findUniqueOrThrow({
+      where: { id: turn.assistantMessageId },
+    });
+
+    expect(message.assets).toBeNull();
+  });
+});
+
 describe("failTurn", () => {
   it("keeps the partial output and records why it failed", async () => {
     const { runId, userId } = await seedRun();

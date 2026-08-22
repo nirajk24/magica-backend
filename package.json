@@ -1,0 +1,59 @@
+{
+  "name": "magica-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20.9"
+  },
+  "scripts": {
+    "dev": "next dev --port 3001",
+    "build": "prisma generate && next build",
+    "postinstall": "prisma generate",
+    "start": "next start --port 3001",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:studio": "prisma studio",
+    "db:seed": "tsx prisma/seed.ts",
+    "db:reset": "prisma migrate reset --force && pnpm db:seed",
+    "trigger:dev": "trigger.dev dev",
+    "trigger:deploy": "trigger.dev deploy"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@clerk/nextjs": "^7.8.0",
+    "@openrouter/ai-sdk-provider": "^3.0.0",
+    "@prisma/adapter-pg": "^7.9.1",
+    "@prisma/client": "^7.9.1",
+    "@trigger.dev/sdk": "^4.5.12",
+    "ai": "^7.0.74",
+    "gray-matter": "^4.0.3",
+    "next": "^16.3.2",
+    "pino": "^10.3.1",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.2.0",
+    "dotenv": "^17.0.0",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "^16.3.2",
+    "msw": "^2.15.0",
+    "pino-pretty": "^13.0.0",
+    "prisma": "^7.9.1",
+    "tsx": "^4.23.12",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.67.0",
+    "vitest": "^4.1.11"
+  },
+  "packageManager": "pnpm@9.15.9"
+}

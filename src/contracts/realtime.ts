@@ -11,6 +11,13 @@ export const RunPhase = z.enum(["thinking", "working", "waiting", "finalizing"])
 export const REASONING_TAIL_CHARS = 4_000;
 
 /**
+ * Per-string ceiling on a projected tool input. The snapshot is re-sent on every metadata update, so
+ * an unbounded prompt is amplified by the number of updates in a turn. A running card only has to be
+ * readable; the completed card reads the full input from `MessageDTO.toolInvocations`.
+ */
+export const INPUT_VALUE_CHARS = 400;
+
+/**
  * Live view of a run, re-sent in full on every update — so every field must stay bounded.
  * `blocks` carries structure only and `reasoningText` is a tail window; prose travels on the
  * append-only text stream and the complete transcript is persisted as a `thinking` block.
@@ -36,6 +43,8 @@ export const RunMetadata = z.object({
       state: InvocationStatus,
       durationMs: z.number().optional(),
       credits: z.string().optional(),
+      /** Truncated for display, so a card can show what a tool was asked to do while it runs. */
+      input: z.json().optional(),
       resultUrls: z.array(z.string()).optional(),
     }),
   ),

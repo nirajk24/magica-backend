@@ -19,6 +19,7 @@ type Admission = {
   chatId: string;
   userId: string;
   content: string;
+  modelId: string;
   planMode: boolean;
   userMessageId: string;
   runId: string;
@@ -58,7 +59,13 @@ async function admitRun(a: Admission): Promise<boolean> {
       });
 
       // Bumps the chat so the sidebar orders by real activity; a new message does not touch it.
-      await tx.chat.update({ where: { id: a.chatId }, data: { updatedAt: new Date() } });
+      // `modelId` is persisted on every send, not only at creation: the composer's model control is
+      // per-message, and silently ignoring it was the one clearly wrong option. Which model actually
+      // answered is recorded per message on `aiModel`, so switching does not rewrite history.
+      await tx.chat.update({
+        where: { id: a.chatId },
+        data: { updatedAt: new Date(), modelId: a.modelId },
+      });
 
       await reserveAdmission(tx, { userId: a.userId, runId: a.runId, attempt: 1 });
     });
@@ -120,6 +127,7 @@ export const POST = defineRoute({
         chatId: chat.id,
         userId,
         content: body.content,
+        modelId: body.modelId,
         planMode: body.planMode,
         userMessageId,
         runId,

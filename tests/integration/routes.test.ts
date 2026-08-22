@@ -196,6 +196,37 @@ describe("POST /chats/:id/messages", () => {
     expect(trigger.dispatched, "a throttled send must not dispatch").toEqual([]);
   });
 
+  it("honours the model chosen on every send, not only when the chat is created", async () => {
+    const first = await envelope<{ chatId: string; runId: string }>(
+      await post("new", { content: "one", modelId: "openrouter/free" }),
+    );
+    const chatId = first.data!.chatId;
+
+    await expect(
+      db.chat.findUniqueOrThrow({ where: { id: chatId } }).then((c) => c.modelId),
+    ).resolves.toBe("openrouter/free");
+
+    // The first run has to finish before a second send is admitted.
+    await db.agentRun.update({ where: { id: first.data!.runId }, data: { status: "completed" } });
+
+    await post(chatId, {
+      content: "two",
+      modelId: "nvidia/nemotron-3-super-120b-a12b:free",
+    });
+
+    await expect(
+      db.chat.findUniqueOrThrow({ where: { id: chatId } }).then((c) => c.modelId),
+      "silently ignoring the composer's model control was the one clearly wrong option",
+    ).resolves.toBe("nvidia/nemotron-3-super-120b-a12b:free");
+  });
+
+  it("rejects a model that is not on the allowlist", async () => {
+    const res = await post("new", { content: "hi", modelId: "openai/gpt-5" });
+
+    expect(res.status).toBe(400);
+    expect((await envelope(res)).error?.code).toBe("VALIDATION_ERROR");
+  });
+
   it("404s a chat the caller does not own", async () => {
     const mine = await envelope<{ chatId: string }>(await post("new", { content: "mine" }));
     clerk.userId = freshUser();

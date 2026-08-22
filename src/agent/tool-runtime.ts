@@ -1,4 +1,4 @@
-import type { RunMetadata } from "@/contracts";
+import { INPUT_VALUE_CHARS, type RunMetadata } from "@/contracts";
 import { chargeTool, reconcileToolCharge, refundToolCharge } from "@/lib/credits";
 import { db } from "@/lib/db";
 import { AppError, ToolError } from "@/lib/errors";
@@ -13,6 +13,24 @@ const ACTIVE = ["queued", "running", "waiting"] as const;
 type Invocations = RunMetadata["invocations"];
 
 /** The run's invocations in the shape the live tool cards render from, read rather than accumulated. */
+/**
+ * Shortens every string in a tool's input so the projection stays small.
+ *
+ * The realtime snapshot is re-sent whenever anything in it changes, so one long prompt is multiplied
+ * by the number of updates a turn makes. Only the running card reads this; the finished card reads
+ * the untruncated input from the persisted row.
+ */
+function forDisplay(value: unknown): unknown {
+  if (typeof value === "string") {
+    return value.length > INPUT_VALUE_CHARS ? `${value.slice(0, INPUT_VALUE_CHARS)}…` : value;
+  }
+  if (Array.isArray(value)) return value.map(forDisplay);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, v]) => [key, forDisplay(v)]));
+  }
+  return value;
+}
+
 async function projectInvocations(runId: string): Promise<Invocations> {
   const rows = await db.toolInvocation.findMany({
     where: { runId },
@@ -23,6 +41,7 @@ async function projectInvocations(runId: string): Promise<Invocations> {
       toolName: true,
       subModelId: true,
       status: true,
+      input: true,
       output: true,
       creditUsed: true,
       startedAt: true,
@@ -41,6 +60,7 @@ async function projectInvocations(runId: string): Promise<Invocations> {
       state: row.status,
       ...(row.subModelId ? { subModelId: row.subModelId } : {}),
       credits: row.creditUsed.toString(),
+      ...(row.input === null ? {} : { input: forDisplay(row.input) as never }),
       ...(urls.length > 0 ? { resultUrls: urls } : {}),
       ...(row.startedAt && row.completedAt
         ? { durationMs: row.completedAt.getTime() - row.startedAt.getTime() }

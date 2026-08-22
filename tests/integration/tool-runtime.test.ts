@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ToolSet } from "ai";
+import { INPUT_VALUE_CHARS } from "@/contracts";
 import { getBalance, sumLedger, topUp } from "@/lib/credits";
 import { db } from "@/lib/db";
 import { uuidv7 } from "@/lib/ids";
@@ -238,5 +239,40 @@ describe("the shortfall a reconcile cannot collect", () => {
     await expectInvariant(turn.userId);
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
+  });
+});
+
+describe("what a running tool card can show", () => {
+  it("projects the tool's input, so a card is not blank while the tool works", async () => {
+    const turn = await seedRun({ funds: 10_000_000n });
+    const { set, published } = toolsFor(turn);
+
+    await invoke(set, { prompt: "a mountain at sunrise", size: "1024x1536" });
+
+    const first = published[0] as { input?: Record<string, unknown> }[];
+    expect(first[0]?.input, "the reference shows these fields while the tool is still running")
+      .toMatchObject({ prompt: "a mountain at sunrise", size: "1024x1536" });
+  });
+
+  /**
+   * The snapshot is re-sent on every metadata change, so one long prompt is multiplied by the number
+   * of updates in a turn. The persisted row keeps the full value for the finished card.
+   */
+  it("truncates a long value rather than amplifying it on every update", async () => {
+    const turn = await seedRun({ funds: 10_000_000n });
+    const { set, published } = toolsFor(turn);
+    const long = "m".repeat(3_000);
+
+    await invoke(set, { prompt: long });
+
+    const projected = (published[0] as { input?: { prompt?: string } }[])[0]?.input?.prompt ?? "";
+    expect(projected.length).toBeLessThanOrEqual(INPUT_VALUE_CHARS + 1);
+    expect(projected.endsWith("…"), "truncation is visible, not silent").toBe(true);
+
+    const row = await db.toolInvocation.findFirstOrThrow({ where: { runId: turn.runId } });
+    expect(
+      (row.input as { prompt: string }).prompt.length,
+      "the persisted input is untouched — only the projection is lossy",
+    ).toBe(3_000);
   });
 });

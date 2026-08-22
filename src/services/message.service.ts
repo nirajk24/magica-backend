@@ -28,6 +28,7 @@ const invocationSelect = {
   id: true,
   toolUseId: true,
   toolName: true,
+  subModelId: true,
   status: true,
   input: true,
   output: true,
@@ -45,6 +46,7 @@ type InvocationRow = {
   id: string;
   toolUseId: string;
   toolName: string;
+  subModelId: string | null;
   status: ToolInvocationDTO["status"];
   input: unknown;
   output: unknown;
@@ -74,6 +76,7 @@ function toInvocationDTO(row: InvocationRow): ToolInvocationDTO {
     id: row.id,
     toolUseId: row.toolUseId,
     toolName: row.toolName,
+    subModelId: row.subModelId,
     display: getTool(row.toolName)?.display ?? { label: row.toolName, icon: "tool" },
     status: row.status,
     input: row.input,

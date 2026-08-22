@@ -4,6 +4,7 @@ import { getBalance, reserveAdmission, sumLedger, topUp } from "@/lib/credits";
 import { db } from "@/lib/db";
 import { env } from "@/lib/env";
 import { uuidv7 } from "@/lib/ids";
+import { listMessages } from "@/services/message.service";
 import { completeTurn, failTurn, loadTurn, persistTurnBlocks } from "@/services/turn.service";
 
 const START = 10_000_000n;
@@ -221,6 +222,35 @@ describe("assets", () => {
       },
     ]);
     expect(message.creditUsed, "and the spend is summed from the same invocations").toBe(5_880n);
+  });
+
+  it("reports which sub-model produced the output", async () => {
+    const { runId } = await seedRun();
+    await loadTurn(runId);
+
+    await db.toolInvocation.create({
+      data: {
+        runId,
+        toolUseId: "call_2",
+        toolName: "gpt_image_2",
+        subModelId: "gpt-image-2-text",
+        status: "completed",
+        input: {},
+        output: { images: ["https://cdn.magica.com/fixtures/a.png"] },
+        creditUsed: 5_880n,
+      },
+    });
+
+    const { messages } = await listMessages({ chatId: (await db.agentRun.findUniqueOrThrow({
+      where: { id: runId }, select: { chatId: true },
+    })).chatId });
+
+    const invocation = messages.flatMap((m) => m.toolInvocations).find((i) => i.toolUseId === "call_2");
+
+    expect(
+      invocation?.subModelId,
+      "the card shows the model that ran; nothing else records it",
+    ).toBe("gpt-image-2-text");
   });
 
   it("leaves assets untouched for a turn that produced no files", async () => {

@@ -166,6 +166,7 @@ model ToolInvocation {
   output       Json?
   errorMessage String?
   magicaRunId  String?
+  subModelId   String?
   creditUsed   BigInt           @default(0)
   startedAt    DateTime?        @db.Timestamptz(3)
   completedAt  DateTime?        @db.Timestamptz(3)

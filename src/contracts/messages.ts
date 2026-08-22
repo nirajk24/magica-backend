@@ -38,6 +38,8 @@ export const ToolInvocationDTO = z.object({
   id: z.string(),
   toolUseId: z.string(),
   toolName: z.string(),
+  /** The provider sub-model that produced the output, when the tool used one. */
+  subModelId: z.string().nullable(),
   display: ToolDisplay,
   status: InvocationStatus,
   input: z.unknown(),

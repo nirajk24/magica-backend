@@ -21,6 +21,7 @@ async function projectInvocations(runId: string): Promise<Invocations> {
       id: true,
       toolUseId: true,
       toolName: true,
+      subModelId: true,
       status: true,
       output: true,
       creditUsed: true,
@@ -38,6 +39,7 @@ async function projectInvocations(runId: string): Promise<Invocations> {
       toolName: row.toolName,
       display: getTool(row.toolName)?.display ?? { label: row.toolName, icon: "tool" },
       state: row.status,
+      ...(row.subModelId ? { subModelId: row.subModelId } : {}),
       credits: row.creditUsed.toString(),
       ...(urls.length > 0 ? { resultUrls: urls } : {}),
       ...(row.startedAt && row.completedAt
@@ -114,6 +116,11 @@ export function createToolRuntime(a: {
      * `magicaRunId` check dedups the submission — two guards on the one call that costs money.
      */
     async runNode({ invocationId, request }) {
+      await db.toolInvocation.update({
+        where: { id: invocationId },
+        data: { subModelId: request.subModelId ?? null },
+      });
+
       const result = await magicaNodeRun.triggerAndWait(
         {
           invocationId,

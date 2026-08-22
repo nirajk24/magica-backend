@@ -27,6 +27,13 @@ export const ApiErrorEnvelope = z.object({
 
 export const Ok = z.object({ ok: z.literal(true) });
 
+/** Infrastructure probe, not a product surface: unauthenticated, and absent from architecture §3.4. */
+export const Health = z.object({
+  ok: z.literal(true),
+  env: z.enum(["development", "test", "production"]),
+  dbLatencyMs: z.number(),
+});
+
 /** Only free-tier OpenRouter models with verified tool-calling support. */
 export const ALLOWED_MODELS = [
   "google/gemma-4-31b-it:free",
@@ -141,3 +148,4 @@ export type ActiveRun = z.infer<typeof ActiveRun>;
 export type WaitpointResolution = z.infer<typeof WaitpointResolution>;
 export type CreditsPage = z.infer<typeof CreditsPage>;
 export type ModelId = z.infer<typeof ModelId>;
+export type Health = z.infer<typeof Health>;

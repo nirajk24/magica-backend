@@ -11,7 +11,15 @@ const config = [
       "@typescript-eslint/no-explicit-any": "error",
     },
   },
-  { ignores: [".next/**", "node_modules/**", "src/generated/**", "prisma/migrations/**"] },
+  {
+    ignores: [
+      ".next/**",
+      "node_modules/**",
+      "src/generated/**",
+      "prisma/migrations/**",
+      ".trigger/**",
+    ],
+  },
 ];
 
 export default config;

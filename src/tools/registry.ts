@@ -1,5 +1,7 @@
 import type { AgentTool } from "@/tools/define";
+import { cropImage } from "@/tools/crop-image";
 import { gptImage2 } from "@/tools/gpt-image-2";
+import { mergeVideos } from "@/tools/merge-videos";
 
 /**
  * Every tool the agent can call. Adding one is an import and a key.
@@ -9,6 +11,8 @@ import { gptImage2 } from "@/tools/gpt-image-2";
  */
 export const registry = {
   [gptImage2.name]: gptImage2,
+  [cropImage.name]: cropImage,
+  [mergeVideos.name]: mergeVideos,
 } satisfies Record<string, AgentTool>;
 
 export type ToolName = keyof typeof registry;

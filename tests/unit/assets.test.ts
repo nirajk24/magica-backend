@@ -1,7 +1,34 @@
-import { describe, expect, it } from "vitest";
-import { gptImage2 } from "@/tools/gpt-image-2";
-import { registry } from "@/tools/registry";
-import { assetsFromInvocation } from "@/tools/assets";
+import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
+
+/**
+ * Every registered tool produces media, so the "declares no assets" branch has no real subject yet —
+ * the first will be an interaction tool, which returns a decision rather than a file. One synthetic
+ * entry gives that branch something to test; every other name still resolves through the real
+ * registry.
+ */
+vi.mock("@/tools/registry", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/tools/registry")>();
+
+  return {
+    ...actual,
+    getTool: (name: string) =>
+      name === "silent_tool"
+        ? {
+            name,
+            description: "Produces no files.",
+            display: { label: "Thinking", icon: "tool" },
+            input: z.object({}),
+            output: z.object({}),
+            credits: () => 0n,
+          }
+        : actual.getTool(name),
+  };
+});
+
+const { gptImage2 } = await import("@/tools/gpt-image-2");
+const { registry } = await import("@/tools/registry");
+const { assetsFromInvocation } = await import("@/tools/assets");
 
 const invocation = (output: unknown) => ({
   toolName: "gpt_image_2",
@@ -36,8 +63,10 @@ describe("turning a tool's output into assets", () => {
   });
 
   it("produces nothing for a tool that declares no assets", () => {
-    expect(assetsFromInvocation({ ...invocation({ images: ["https://cdn/a.png"] }), toolName: "crop_image" }))
-      .toEqual([]);
+    expect(
+      assetsFromInvocation({ ...invocation({}), toolName: "silent_tool" }),
+      "a tool that declares nothing produces nothing, which is how non-media tools stay silent",
+    ).toEqual([]);
   });
 
   it("produces nothing for an unregistered tool rather than throwing", () => {

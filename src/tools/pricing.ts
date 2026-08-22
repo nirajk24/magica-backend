@@ -79,6 +79,7 @@ const CATALOG: Record<string, CostModel> = {
     defaultTier: "High:1024x1024",
   },
   crop_image: { type: "per_image", value: 0.005 },
+  merge_videos: { type: "per_minute", baseValue: 0.04, extraPerVideo: 0.01 },
 };
 
 const prices = new Map<string, CostModel>(Object.entries(CATALOG));

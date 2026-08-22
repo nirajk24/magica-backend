@@ -2,6 +2,7 @@ import { z } from "zod";
 import { env } from "@/lib/env";
 import { ToolError } from "@/lib/errors";
 import { defineTool } from "@/tools/define";
+import { extractUrls } from "@/tools/node-output";
 import { estimateMicrocredits } from "@/tools/pricing";
 
 const NODE_TYPE = "gpt_image_2";
@@ -42,23 +43,6 @@ const Input = z
 const Output = z.object({ images: z.array(z.string().url()).min(1) });
 
 /**
- * Collects http urls from anywhere in a node's output. The catalog documents `output` as an
- * arbitrary per-node shape, so it is searched rather than destructured.
- */
-function extractImageUrls(output: unknown): string[] {
-  const urls: string[] = [];
-
-  const visit = (value: unknown): void => {
-    if (typeof value === "string" && /^https?:\/\//.test(value)) urls.push(value);
-    else if (Array.isArray(value)) value.forEach(visit);
-    else if (value && typeof value === "object") Object.values(value).forEach(visit);
-  };
-
-  visit(output);
-  return urls;
-}
-
-/**
  * Text-to-image. Safety rejection is a normal path, not an edge case: the `ToolError` carries
  * Magica's own `userMessage` so the model can rephrase and retry.
  *
@@ -89,7 +73,7 @@ export const gptImage2 = defineTool({
 
     ctx.reportCost(creditUsed);
 
-    const images = extractImageUrls(output);
+    const images = extractUrls(output);
     if (images.length === 0) {
       throw new ToolError("The image generator returned no image.");
     }

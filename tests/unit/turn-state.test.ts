@@ -151,6 +151,40 @@ describe("reasoning", () => {
     expect(block?.type === "thinking" && block.thinking).toHaveLength(long.length);
   });
 
+  it("trims the transcript, which the model often ends with blank lines", () => {
+    const state = createTurnState();
+
+    state.appendReasoning("\n  weighing options\n\n", 0);
+    state.closeReasoning(0);
+
+    const block = state.blocks()[0];
+
+    expect(block?.type === "thinking" && block.thinking).toBe("weighing options");
+  });
+
+  it("keeps newlines inside the transcript, only the ends go", () => {
+    const state = createTurnState();
+
+    state.appendReasoning("first thought\n\nsecond thought\n", 0);
+    state.closeReasoning(0);
+
+    const block = state.blocks()[0];
+
+    expect(block?.type === "thinking" && block.thinking).toBe("first thought\n\nsecond thought");
+  });
+
+  it("never trims a text block, because `chars` must match what the stream carried", () => {
+    const state = createTurnState();
+
+    state.appendText("trailing space kept ");
+    state.closeText();
+
+    const block = state.blocks()[0];
+
+    expect(block?.type === "text" && block.text).toBe("trailing space kept ");
+    expect(state.streamOffset(), "trimming here would shift every later block").toBe(20);
+  });
+
   it("records how long it thought for", () => {
     const state = createTurnState();
 

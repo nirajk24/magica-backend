@@ -61,13 +61,18 @@ export function createTurnState() {
       return reasoning.text.slice(-REASONING_TAIL_CHARS);
     },
 
+    /**
+     * Trims the ends of the transcript, which text blocks must never do: `chars` has to equal the
+     * characters actually appended to the stream, so trimming a text block would shift every offset
+     * after it. Reasoning never touches the stream, so its whitespace is safe to drop.
+     */
     closeReasoning(now: number): boolean {
       if (!reasoning) return false;
 
       closed.push({
         segment: takeSegment(),
         type: "thinking",
-        thinking: reasoning.text,
+        thinking: reasoning.text.trim(),
         durationMs: Math.max(0, now - reasoning.startedAt),
       });
       reasoning = null;

@@ -1262,8 +1262,22 @@ Related: AI SDK v7 streams tool input as `tool-input-start` / `tool-input-delta`
 `inputTextDelta`) / `tool-input-end`, **and** emits a final `tool-call` carrying the complete `input`.
 We handle only `tool-call`, so there is no partial-argument assembler to write.
 
-**OpenRouter budget (50/day, hard):** all automated tests = **0 requests**. Dev checks ≤20/day.
-Acceptance ~10, once. Demo ~20 headroom, recorded right after the daily reset.
+**OpenRouter budget (50/day, hard — confirmed on Slack, session 7; Magica's own LLM gateway is NOT
+permitted, so free-tier OpenRouter is the only path).** All automated tests = **0 requests**. Dev
+checks <=20/day. Acceptance ~10, once. Demo ~20 headroom, recorded right after the daily reset.
+
+**The caps bound a runaway, they do not ration normal use.** A one-tool turn costs two requests and a
+two-tool turn three, whatever `MAX_TURNS` and `MAX_STEPS` are set to. What consumes the day is the
+number of turns run, so the caps exist to stop a loop bug or a tool-calling model from spending it in
+one go. Defaults are **`MAX_TURNS` 3 x `MAX_STEPS` 4 = 12** worst case, and `lib/env.ts` now
+`superRefine`s the product against `OPENROUTER_DAILY_REQUESTS`: a pair that lets one turn spend more
+than half the day fails at boot, naming both variables and printing the arithmetic. Decision #49's
+"raise one, never both" is therefore enforced rather than remembered.
+
+**Step 5b owes the counterpart: make the spend observable.** Nothing today counts actual requests —
+the inner tool rounds happen inside `streamText`, so the loop cannot see them. The adapter must pass
+`onStepFinish` and count, then log the total per turn, or a runaway is only visible as a 429 the next
+day.
 
 ---
 

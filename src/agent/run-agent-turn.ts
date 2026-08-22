@@ -19,6 +19,11 @@ export type TurnStream = {
   parts: AsyncIterable<TurnStreamPart>;
   /** `PromiseLike` because that is what the SDK hands back; the loop only ever awaits it. */
   usage: PromiseLike<TurnUsage>;
+  /**
+   * The model that actually answered, which is not necessarily the one requested: the default is a
+   * router that picks an available free model per request.
+   */
+  servedModel: PromiseLike<string | undefined>;
 };
 
 export type PendingInteraction = {
@@ -52,6 +57,7 @@ export type AgentTurnDeps = {
   finalize: (a: {
     blocks: ContentBlock[];
     tokenUsage: { inputTokens: number; outputTokens: number } | null;
+    servedModel: string | null;
   }) => Promise<void>;
   finalizeFailed: (a: { reason: string; blocks: ContentBlock[] }) => Promise<void>;
   now: () => number;
@@ -92,6 +98,7 @@ export async function runAgentTurn(
 ): Promise<AgentTurnResult> {
   const state = createTurnState();
   let turns = 0;
+  let servedModel: string | undefined;
 
   try {
     const { modelId, assistantMessageId, history } = await deps.bootstrap(runId);
@@ -186,6 +193,8 @@ export async function runAgentTurn(
       }
 
       const tokenUsage = normalizeUsage(await stream.usage);
+      // Overwritten each round, so the recorded model is the one that produced the final answer.
+      servedModel = (await stream.servedModel) ?? servedModel;
 
       if (!produced) {
         if (!retriedEmptyStream) {
@@ -228,7 +237,7 @@ export async function runAgentTurn(
         tokenUsage: tokenUsage ?? undefined,
       });
 
-      await deps.finalize({ blocks: state.blocks(), tokenUsage });
+      await deps.finalize({ blocks: state.blocks(), tokenUsage, servedModel: servedModel ?? null });
       completed = true;
       break;
     }

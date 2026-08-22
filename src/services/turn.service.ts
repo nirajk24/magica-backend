@@ -161,6 +161,7 @@ async function finalizeTurn(a: {
   blocks: ContentBlock[];
   status: "completed" | "failed";
   tokenUsage: { inputTokens: number; outputTokens: number } | null;
+  servedModel?: string | null;
   failureReason?: string;
 }): Promise<void> {
   const { creditUsed, assets } = await completedWork(a.runId);
@@ -175,6 +176,11 @@ async function finalizeTurn(a: {
         creditUsed,
         assets: assets.length > 0 ? (assets as unknown as Prisma.InputJsonValue) : undefined,
         tokenUsage: a.tokenUsage ?? undefined,
+        // The bootstrap recorded what was requested; this is what answered. Under the default
+        // router those differ, and only the second is worth showing anyone.
+        aiModel: a.servedModel
+          ? (describeModel(a.servedModel) as unknown as Prisma.InputJsonValue)
+          : undefined,
         errorMessage: a.failureReason ?? null,
       },
     });
@@ -194,6 +200,7 @@ export function completeTurn(a: {
   messageId: string;
   blocks: ContentBlock[];
   tokenUsage: { inputTokens: number; outputTokens: number } | null;
+  servedModel?: string | null;
 }): Promise<void> {
   return finalizeTurn({ ...a, status: "completed" });
 }

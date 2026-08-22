@@ -30,6 +30,7 @@ const USAGE: TurnUsage = { inputTokens: 100, outputTokens: 40 };
 function harness(a: {
   turns: TurnStreamPart[][];
   usage?: TurnUsage;
+  servedModel?: string;
   resolution?: unknown;
   onSuspend?: () => void;
 }): Recorder {
@@ -67,6 +68,7 @@ function harness(a: {
           for (const part of script) yield await Promise.resolve(part);
         })(),
         usage: Promise.resolve(a.usage ?? USAGE),
+        servedModel: Promise.resolve(a.servedModel ?? "nvidia/nemotron-3-super-120b-a12b:free"),
       };
     },
 

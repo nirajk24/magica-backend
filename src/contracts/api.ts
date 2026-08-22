@@ -50,7 +50,16 @@ export const Health = z.object({
  * is the one observed actually answering — the other two were rate-limited upstream by their own
  * providers on every attempt.
  */
+/**
+ * `openrouter/free` is the Free Models Router: it picks an available free model per request, which is
+ * how a turn survives one provider rate-limiting us without any fallback logic of ours. It is first,
+ * so it is the default. The explicit ids remain selectable for pinning a single model.
+ *
+ * INVARIANT: every entry must be free and must support tool calling. The agent loop cannot run on a
+ * model without tools, and a paid model is out of scope.
+ */
 export const ALLOWED_MODELS = [
+  "openrouter/free",
   "nvidia/nemotron-3-super-120b-a12b:free",
   "google/gemma-4-31b-it:free",
   "z-ai/glm-5.2:free",

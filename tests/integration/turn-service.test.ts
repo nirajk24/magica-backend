@@ -74,6 +74,55 @@ describe("the serving model on the assistant row", () => {
     expect(assistant?.aiModel?.name).not.toContain(":");
   });
 
+  it("is overwritten at finalize by the model that actually answered", async () => {
+    const { userId, runId } = await seedRun();
+    const turn = await loadTurn(runId);
+
+    // Under the default `openrouter/free` router, what answers is not what was requested.
+    await completeTurn({
+      runId,
+      userId,
+      messageId: turn.assistantMessageId,
+      blocks,
+      tokenUsage: null,
+      servedModel: "z-ai/glm-5.2:free",
+    });
+
+    const message = await db.message.findUniqueOrThrow({
+      where: { id: turn.assistantMessageId },
+      select: { aiModel: true },
+    });
+
+    expect(message.aiModel, "the router's own id would tell a user nothing").toEqual({
+      id: "z-ai/glm-5.2:free",
+      name: "glm-5.2",
+      provider: "z-ai",
+    });
+  });
+
+  it("keeps the requested model when the provider names none", async () => {
+    const { userId, runId } = await seedRun();
+    const turn = await loadTurn(runId);
+
+    await completeTurn({
+      runId,
+      userId,
+      messageId: turn.assistantMessageId,
+      blocks,
+      tokenUsage: null,
+      servedModel: null,
+    });
+
+    const message = await db.message.findUniqueOrThrow({
+      where: { id: turn.assistantMessageId },
+      select: { aiModel: true },
+    });
+
+    expect(message.aiModel, "better the requested model than nothing at all").toMatchObject({
+      id: turn.modelId,
+    });
+  });
+
   it("survives a resumed attempt unchanged", async () => {
     const { runId } = await seedRun();
     const first = await loadTurn(runId);

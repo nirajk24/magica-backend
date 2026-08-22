@@ -131,13 +131,14 @@ export const agentTurn = task({
             output: resolution,
           }),
 
-        finalize: ({ blocks, tokenUsage }) =>
+        finalize: ({ blocks, tokenUsage, servedModel }) =>
           completeTurn({
             runId,
             userId: turn.userId,
             messageId: turn.assistantMessageId,
             blocks,
             tokenUsage,
+            servedModel,
           }),
 
         finalizeFailed: ({ reason, blocks }) =>

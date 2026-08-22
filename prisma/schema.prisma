@@ -55,7 +55,7 @@ model Chat {
   user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   title      String     @default("New task")
   isFavorite Boolean    @default(false)
-  modelId    String     @default("nvidia/nemotron-3-super-120b-a12b:free")
+  modelId    String     @default("openrouter/free")
   activePlan Json?
   deletedAt  DateTime?  @db.Timestamptz(3)
   createdAt  DateTime   @default(now()) @db.Timestamptz(3)

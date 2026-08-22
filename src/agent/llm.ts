@@ -145,6 +145,12 @@ export function createStreamStarter(a: {
     return {
       parts: mapParts(result.fullStream, noteRateLimit),
       usage: result.totalUsage,
+      // The router resolves to a different id than the one requested, and only the response knows it.
+      // `PromiseLike` has no `.catch`, and a failed turn never awaits this, so it is wrapped.
+      servedModel: Promise.resolve(result.response).then(
+        (response) => response.modelId,
+        () => undefined,
+      ),
     };
   };
 }

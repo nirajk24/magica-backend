@@ -195,5 +195,24 @@ export function createToolRuntime(a: {
       a.log.warn({ invocationId, durationMs }, "tool failed");
       await publish();
     },
+
+    async loadedSkillNames() {
+      const rows = await db.runSkill.findMany({
+        where: { runId: turn.runId },
+        select: { skillName: true },
+        distinct: ["skillName"],
+      });
+
+      return rows.map((row) => row.skillName);
+    },
+
+    /** The unique `(runId, skillName, assetPath)` is what makes a repeated load a dedup. */
+    async recordSkillLoad({ skillName, assetPath, contentHash }) {
+      await db.runSkill.upsert({
+        where: { runId_skillName_assetPath: { runId: turn.runId, skillName, assetPath } },
+        update: { contentHash },
+        create: { runId: turn.runId, skillName, assetPath, contentHash },
+      });
+    },
   };
 }

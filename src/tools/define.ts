@@ -28,6 +28,14 @@ export type ToolCtx = {
   invocationId: string;
   runNode: (request: NodeRunRequest) => Promise<{ output: unknown; creditUsed: bigint }>;
   reportCost: (microcredits: bigint) => void;
+  /** Distinct skill names this run has already loaded — the per-turn load budget counts these. */
+  loadedSkillNames: () => Promise<string[]>;
+  /** Idempotent on `(runId, skillName, assetPath)`, which is what makes a repeat load a dedup. */
+  recordSkillLoad: (a: {
+    skillName: string;
+    assetPath: string;
+    contentHash: string;
+  }) => Promise<void>;
   log: Logger;
 };
 

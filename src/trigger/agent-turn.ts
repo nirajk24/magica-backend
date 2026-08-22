@@ -2,6 +2,7 @@ import { metadata, task, wait } from "@trigger.dev/sdk";
 import type { WaitpointResolution } from "@/contracts";
 import { db } from "@/lib/db";
 import { recordRateLimit } from "@/lib/llm-status";
+import { loadSkillRegistry } from "@/lib/skills/load";
 import { bindContext, logger } from "@/lib/logger";
 import { getTool } from "@/tools/registry";
 import { ensureCatalogPricing } from "@/tools/pricing";
@@ -29,6 +30,11 @@ export const agentTurn = task({
 
     // Priced from the live catalog before the first estimate; on failure the committed table stands.
     await ensureCatalogPricing();
+
+    // Scanned here rather than at import: a malformed skill must fail loudly, but failing at module
+    // scope would break the task *build* with a message naming nothing relevant. This fails the turn
+    // instead, with the offending directory in the error.
+    loadSkillRegistry();
 
     const turn = await loadTurn(runId, ctx.run.id);
     const turnLog = bindContext(log, {

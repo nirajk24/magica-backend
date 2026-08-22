@@ -36,6 +36,14 @@ function fakes(opts?: { active?: boolean; chargeError?: unknown }): Fakes {
       f.calls.push("isRunActive");
       return Promise.resolve(opts?.active ?? true);
     },
+    loadedSkillNames: () => {
+      f.calls.push("loadedSkillNames");
+      return Promise.resolve([]);
+    },
+    recordSkillLoad: () => {
+      f.calls.push("recordSkillLoad");
+      return Promise.resolve();
+    },
     beginInvocation: () => {
       f.calls.push("beginInvocation");
       return Promise.resolve("inv_1");

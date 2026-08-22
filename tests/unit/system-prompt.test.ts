@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { ContentBlock } from "@/contracts";
-import { SYSTEM_PROMPT, toModelMessages } from "@/prompts/system";
+import { buildSystemPrompt, toModelMessages } from "@/prompts/system";
+
+const SYSTEM_PROMPT = buildSystemPrompt([]);
 
 const build = (a: Partial<Parameters<typeof toModelMessages>[0]>) =>
   toModelMessages({ history: [], blocks: [], resolutions: [], ...a });

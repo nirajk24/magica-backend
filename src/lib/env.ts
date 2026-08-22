@@ -28,6 +28,8 @@ const EnvShape = z.object({
   OPENROUTER_DAILY_REQUESTS: z.coerce.number().int().min(1).default(50),
   MAX_TURNS: z.coerce.number().int().min(1).max(6).default(3),
   MAX_STEPS: z.coerce.number().int().min(1).max(8).default(4),
+  /** Distinct skills one run may load. Each load costs an OpenRouter request from a 50/day budget. */
+  MAX_SKILL_LOADS_PER_TURN: z.coerce.number().int().min(0).max(5).default(2),
   SEND_RATE_PER_MINUTE: z.coerce.number().int().default(10),
 
   DEMO_MODE: flag("false"),

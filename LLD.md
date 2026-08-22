@@ -1163,7 +1163,10 @@ is addressed by run id and message id respectively and only learns the chat once
 
 ### Phase 3 — Skills · ~3h · explicitly tested
 
-**Goal:** the PDF's skills system, with its five named tests.
+**Goal:** on-demand guidance the model fetches itself, with the seven tests the scope authority names.
+
+A skill is versioned guidance for a class of work. It is not executable and it is never loaded into
+every prompt. Skills guide the model; ordinary typed tools perform the side effects.
 
 **Files** — `lib/skills/{scan,load}.ts`, `tools/{load-skill,read-skill-asset}.ts`,
 `agent-skills/*/SKILL.md`, `prompts/system.ts` (+ L1 index), `tests/fixtures/bad-skills/`.
@@ -1172,17 +1175,33 @@ is addressed by run id and message id respectively and only learns the chat once
 - Startup scan of `agent-skills/`, **resolved from package root not `cwd`** — otherwise the registry
   is empty in the Trigger.dev bundle while working perfectly in dev. Ship the directory via
   `trigger.config.ts` external files.
-- `gray-matter` → `SkillMeta.parse` → reject duplicates → 64 KB cap → `sha256`.
+- `gray-matter` → `SkillMeta.parse` → reject duplicate names → 64 KB cap → `sha256`.
 - L1: `name: description` pairs in the system prompt. L2: `load_skill`. L3: `read_skill_asset` with
   the containment check `abs.startsWith(resolve(dir, name) + path.sep)` — **the `+ path.sep` matters**,
   without it `skills/foo-evil` passes a check meant for `skills/foo`.
 - `RunSkill` upsert on `(runId, skillName, assetPath)` with `assetPath` defaulting to `""` **not null**.
+- **Three skills**, which is the stated minimum and also the cheapest compliant number:
+  `image-editing` (carrying an asset, so `read_skill_asset` has a real target), `video-production`,
+  `media-planning`. `capabilities` is **not** among them — "what can you do" is every-turn context,
+  not a class of work, and behind a loader it would spend a request on the cheapest kind of turn.
 
-**DoD** — 4 skills load; malformed frontmatter is rejected at boot with a named error; `../../etc/passwd`
-is refused; a repeat load dedups; an unknown skill returns a tool-error the model recovers from;
-a suspended run resumes with the same hashes.
+**Cost control — a load is one OpenRouter request against 50/day**
+A tool result is only visible on the next request, so every load costs one. Caching the file read
+changes the rendered duration, not the count. Three bounds, cheapest first:
+1. Three skills, not more.
+2. Base-prompt rules: load only for the named class of work; never for a greeting, a capability
+   question, or anything answerable without it; never load the same skill twice.
+3. `MAX_SKILL_LOADS_PER_TURN` (default 2), counted as distinct `RunSkill` rows for the run. A **new**
+   skill past the budget returns a `ToolError` so the model proceeds with what it has; a **repeat**
+   load is a dedup, never counts, never errors.
 
-**Tests** — the five above, by name. They are named in the PDF and must exist by those names.
+**DoD** — three skills load; the L1 index carries only names and descriptions; a turn needing no
+skill loads none; the seven named tests pass.
+
+**Tests — the seven the scope authority names, by name**
+`selective loading` · `malformed frontmatter` · `duplicate skill names` · `unknown skill` ·
+`path traversal` · `deduplication` · `durable resume`.
+Numbers 3 and 6 are different mechanisms — a startup check across directories, and a per-run write.
 
 ---
 
@@ -1214,8 +1233,19 @@ Pure additive. **If any of this requires touching `run-agent-turn.ts`, stop — 
 
 - `crop_image` — Zod `.superRefine`: a complete percent rect **or** a complete pixel rect; reject
   partial sets and mixed units. The catalog marks no coord field required, so this validation is
-  entirely ours.
-- `merge_videos` — `video_urls` 2–100 (our bound, not the catalog's), order preserved, `transition` enum.
+  entirely ours. **Every coordinate stays optional with no Zod default**: the catalog defaults the
+  percent fields to a full frame, so applying those defaults would turn a coordinate-less call into a
+  valid whole-image crop and the model would get a picture back instead of an error it can correct.
+  Percent rectangles are also bounds-checked (`x + width <= 100`); pixel ones cannot be, because the
+  image's dimensions are not known until it is fetched.
+- `merge_videos` — `video_urls` 2–100 (our bound, not the catalog's), order preserved and never
+  de-duplicated, `transition` enum. Priced `per_minute`, and output length is unknown before the
+  merge runs, so the estimate scales with the number of inputs and is reconciled against what the
+  provider reports. Its poll ceiling is raised per call, which is what `timeoutMs` on the child-task
+  payload exists for.
+- **A new node type needs a row in the committed fallback price table**, not only the live catalog.
+  `estimateMicrocredits` throws on an unpriced node, so without one a catalog outage turns every call
+  to that tool into a failed turn instead of a charged one.
 - `get_model_schema` — cached per process; always render the duration (7 ms cache hit vs 3.7 s cold).
 - `GET /chats` with `?cursor&search&filter`; `PATCH`/`DELETE /chats/:id`; message pagination via
   `messagesCursor`.
@@ -1364,6 +1394,10 @@ from here.
 | `pnpm check:wiring` reporting a same-file export as test-only | reads as a wiring bug when the function has real callers in its own module | the checker counts cross-file references. Confirm by grep before acting on it |
 | A ledger key built from a **client-supplied** idempotency key alone | two users choosing the same `Idempotency-Key` collide; the second silently gets nothing and a stale balance | scope it by user: `top_up:{userId}:{clientKey}` |
 | A test asserting a literal id that lands in a `@unique` column | passes once, then poisons every later run — a suite killed before `afterAll` leaves the value behind | mint globally unique ids in the mock (`randomUUID`), and assert against the value the response returned, not a literal |
+| A test asserting an exact registry membership or count | the next phase that adds a tool fails it | partition by `tags`, assert `arrayContaining` for what must be present. A test that hard-codes a name or a total it does not own has an expiry date |
+| Resolving a shipped data directory with a fixed number of `..` hops | works in the repo, breaks in a bundle — a bundler flattens compiled chunks, so the file's depth below the package root is not a constant | search upward for the directory from `import.meta.dirname`, bounded, and **throw** when it is absent. An empty registry is the silent failure the search exists to prevent, so it must never be the fallback |
+| Assuming a deploy-only build extension cannot be checked locally | a real gap ships unverified | `trigger.dev deploy --dry-run` builds the full deploy bundle without deploying and prints its path. Inspect it. `additionalFiles` is a no-op in dev because dev runs from source, so the dry run is the *only* local way to see it |
+| A fixed number of `..` hops to a shipped data directory | the bundle puts `agent-skills/` at its root and the compiled task two levels down at `src/trigger/`, so three hops lands outside the bundle entirely — measured, not guessed | search upward from `import.meta.dirname`, bounded, and throw when absent. `findSkillsDir` is extracted so a test can assert the real bundle layout |
 
 ---
 

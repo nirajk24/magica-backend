@@ -35,6 +35,12 @@ export type ToolRuntime = {
     message: string;
     durationMs: number;
   }) => Promise<void>;
+  loadedSkillNames: () => Promise<string[]>;
+  recordSkillLoad: (a: {
+    skillName: string;
+    assetPath: string;
+    contentHash: string;
+  }) => Promise<void>;
   now: () => number;
   log: Logger;
 };
@@ -134,6 +140,8 @@ export function toAiSdkTools(
             reportCost: (microcredits) => {
               actualCost = microcredits;
             },
+            loadedSkillNames: runtime.loadedSkillNames,
+            recordSkillLoad: runtime.recordSkillLoad,
             log: runtime.log,
           });
 

@@ -6,7 +6,7 @@ import { AppError } from "@/lib/errors";
 import type { Logger } from "@/lib/logger";
 import { registry } from "@/tools/registry";
 import { toAiSdkTools, type ToolRuntime, type TurnContext } from "@/tools/to-ai-sdk";
-import { SYSTEM_PROMPT, toModelMessages, type HistoryMessage, type TurnResolution } from "@/prompts/system";
+import { buildSystemPrompt, toModelMessages, type HistoryMessage, type TurnResolution } from "@/prompts/system";
 import type { AgentTurnDeps, TurnStream, TurnStreamPart } from "@/agent/run-agent-turn";
 
 /**
@@ -131,7 +131,7 @@ export function createStreamStarter(a: {
     const result = streamText({
       model: openrouter.chat(modelId, { reasoning: { enabled: true, effort: "medium" } }),
       // Not a `system` message inside `messages`: the SDK rejects that outright.
-      instructions: SYSTEM_PROMPT,
+      instructions: buildSystemPrompt(),
       messages,
       tools,
       stopWhen,

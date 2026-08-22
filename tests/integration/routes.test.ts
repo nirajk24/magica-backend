@@ -171,13 +171,19 @@ describe("POST /chats/:id/messages", () => {
     const userId = clerk.userId!;
     // The allowance is exhausted up front rather than by sending N times: N sequential round trips
     // to Neon can straddle the minute boundary, which resets the counter and makes the test flake.
+    //
+    // Both the current bucket and the next are seeded, because the seeding itself takes seconds
+    // against a remote database — filling only the current minute leaves the request landing in a
+    // fresh, empty bucket whenever the clock happens to roll over mid-test.
     await db.user.create({ data: { id: userId, email: `${userId}@seed.test` } });
-    await db.sendRateLimit.create({
-      data: {
-        userId,
-        window: new Date().toISOString().slice(0, 16),
-        count: env.SEND_RATE_PER_MINUTE,
-      },
+
+    const minute = 60_000;
+    const windows = [Date.now(), Date.now() + minute].map((at) =>
+      new Date(at).toISOString().slice(0, 16),
+    );
+
+    await db.sendRateLimit.createMany({
+      data: windows.map((window) => ({ userId, window, count: env.SEND_RATE_PER_MINUTE })),
     });
 
     const res = await post("new", { content: "one too many" });

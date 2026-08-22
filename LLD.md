@@ -889,6 +889,11 @@ export async function runAgentTurn(deps: Deps, { runId }: { runId: string }) {
     // 3. WAITPOINT — task level, never inside a live stream
     // An interaction tool has NO `execute`, so v5 emits the call and ends the step; `stopWhen` halts
     // the loop. The resolution MUST go back as a tool-result message or the model repeats the call.
+    // suspendOn() MUST metadata.flush() BEFORE wait.forToken (dry-run F11): Trigger.dev BATCHES
+    // metadata writes, so a bare set() may not have left the machine when the run suspends. A client
+    // reloading during the wait would then see phase:'working' with no waitpoint and render NO
+    // approval card, against a run that sits for 15 minutes with no way to resolve it. Invisible in
+    // local dev, where suspend is fast. Flush again after writing the resolution.
     if (pendingInteraction) { const resolution = await deps.suspendOn(pendingInteraction);
                               history.push(toolResultMessage(pendingInteraction, resolution));
                               segment++; continue; }
@@ -921,6 +926,14 @@ Every tool goes through the same wrapper. Tools stay pure; all persistence and m
 
 Step 4 before step 5 is the whole mid-turn-exhaustion story, and it means there is never a
 late-settle race.
+
+**The window this leaves, stated plainly (dry-run F12):** `chargeTool` commits in its own short
+transaction; `execute` is a network call outside any transaction. Crash in between and the charge
+stands with no work done. This is **recovered, not prevented** — the retry reset path cancels and
+refunds non-terminal invocations (decision #20), so it clears when the user retries. Worth knowing
+because it reads like a hole, and because the obvious "fix" (charge after execute) reintroduces the
+late-settle race the ordering exists to prevent. Charging first stays correct; the compensating
+action closes the window.
 
 **DoD (demo this to yourself before moving on)**
 - Send a prompt → `202`-shaped `SendMessageResult` in <300ms
@@ -1064,8 +1077,14 @@ Target: **~15 unit · ~8 integration · 3 acceptance · 2 E2E.** Not a coverage 
 | acceptance | real Magica + real OpenRouter | env-gated, **run ONCE**, Day 3 morning. ~10 of the 50 daily requests |
 | E2E | Playwright | one happy path. Reload-recovery is a recorded manual check |
 
-**MSW fixtures come from the archived live catalog** (`docs/api-notes/magica-docs/`), not from
-hand-written guesses — so the mocks match the real API shape by construction.
+**MSW handlers are GENERATED from the contracts, not hand-authored (dry-run F15).** Hand-written
+handlers drift from the Zod schemas, and at that point integration tests pass against a fiction.
+Build response bodies from the same schemas the routes parse. Magica fixtures seed from the archived
+live catalog (`docs/api-notes/magica-docs/required-tools-schemas.json`) rather than from memory — the
+catalog is on disk precisely so the mocks match the real API by construction.
+
+Related: AI SDK v5 emits `tool-call-delta` parts carrying `argsTextDelta` **and** a final `tool-call`
+with complete `input`. We handle only `tool-call`, so there is no partial-argument assembler to write.
 
 **OpenRouter budget (50/day, hard):** all automated tests = **0 requests**. Dev checks ≤20/day.
 Acceptance ~10, once. Demo ~20 headroom, recorded right after the daily reset.

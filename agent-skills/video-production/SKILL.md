@@ -1,6 +1,6 @@
 ---
 name: video-production
-description: How to assemble finished video from clips the user already has — ordering, transitions, and what to check before merging. Load this when the request involves joining, stitching or sequencing video.
+description: Authoritative rules for assembling video from existing clips — ordering, transitions, and what to check before merging. Load before any request to join, stitch or sequence video.
 ---
 
 # Video production

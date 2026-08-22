@@ -1,6 +1,6 @@
 ---
 name: media-planning
-description: The contract for proposing multi-step media work and its cost before running any of it. Load this when a request needs more than one billable tool call, or when the user asks what something will cost.
+description: The required contract for proposing multi-step work and its cost before any of it runs. Load before proposing a plan, and whenever a request needs more than one billable tool call or asks what something will cost.
 ---
 
 # Media planning

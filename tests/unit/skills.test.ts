@@ -100,6 +100,16 @@ describe("the shipped skills", () => {
       expect(skill.contentHash, name).toMatch(/^[0-9a-f]{64}$/);
     }
   });
+
+  /**
+   * The description is the only thing the model sees before choosing, so it has to name the trigger
+   * rather than merely describe the subject. A purely descriptive line reads as optional reading.
+   */
+  it("names when to load it, not just what it is about", () => {
+    for (const [name, skill] of shipped()) {
+      expect(skill.description, name).toMatch(/\bload\b/i);
+    }
+  });
 });
 
 describe("the base prompt carries the index and nothing more", () => {
@@ -122,14 +132,39 @@ describe("the base prompt carries the index and nothing more", () => {
     }
   });
 
-  it("tells the model when not to load, because every load costs a request", () => {
+  /**
+   * The wording here is load-bearing and was got wrong once. Saying "most turns need no skill at
+   * all" and "do not load one to answer something you can already answer" made a capable model
+   * decline on a turn squarely inside a skill's stated territory — it concluded it could already
+   * answer. The rules are positive now, and the exclusions are a closed list.
+   */
+  it("tells the model to load when a request is a skill's class of work", () => {
     const prompt = buildSystemPrompt([{ name: "x", description: "y" }]);
 
-    expect(prompt).toMatch(/never load the same skill twice/i);
-    expect(prompt).toMatch(/most turns need no skill/i);
-    expect(prompt, "a capability question must be answerable from the prompt").toMatch(
-      /do not load a skill to find out/i,
+    expect(prompt, "guidance has to outrank the model's own defaults or it gets skipped").toMatch(
+      /authoritative/i,
     );
+    expect(prompt).toMatch(/before\s+you\s+act/i);
+  });
+
+  it("keeps the exclusions a closed list, not an open invitation to skip", () => {
+    const prompt = buildSystemPrompt([{ name: "x", description: "y" }]);
+
+    expect(prompt).toMatch(/greetings, small talk, and questions about what you can do/i);
+    expect(prompt, "an open-ended excuse is what suppressed loading entirely").not.toMatch(
+      /already answer/i,
+    );
+    expect(prompt).not.toMatch(/most turns need no skill/i);
+  });
+
+  it("still forbids reloading, which costs a request for guidance already in hand", () => {
+    expect(buildSystemPrompt([{ name: "x", description: "y" }])).toMatch(
+      /never load the same skill twice/i,
+    );
+  });
+
+  it("keeps capability questions answerable without a load", () => {
+    expect(buildSystemPrompt([])).toMatch(/do not load a skill to find out/i);
   });
 
   it("omits the skill section entirely when there are no skills", () => {

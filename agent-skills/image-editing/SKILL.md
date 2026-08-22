@@ -1,6 +1,6 @@
 ---
 name: image-editing
-description: How to size, crop and regenerate images for a stated purpose — posters, thumbnails, social posts, print. Load this when the request names a format, an aspect ratio, or an edit to an existing image.
+description: Authoritative rules for image work — the output-size table, when to crop rather than regenerate, and how to specify a crop rectangle correctly. Load before any request to create, resize, reframe or crop an image.
 ---
 
 # Image editing

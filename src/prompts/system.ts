@@ -28,16 +28,23 @@ arguments or tell the user plainly what went wrong and stop. Never repeat a call
 that just failed, and if \`retryable\` is false do not use that tool again this turn.`;
 
 /**
- * How to spend the skill budget. Stated as rules the model can follow rather than left implicit,
- * because every load costs a model request and the daily allowance is small.
+ * How to spend the skill budget.
+ *
+ * Positive first, and the exclusions are a closed list. An earlier version said "most turns need no
+ * skill at all" and "do not load one to answer something you can already answer" — a capable model
+ * concludes it can already answer everything, and loaded nothing on a turn squarely inside a skill's
+ * stated territory. The hard per-turn budget is the cost control; the prompt only has to say when
+ * guidance is authoritative.
  */
 const SKILL_RULES = `Skills are written guidance for one class of work. They tell you how to do
-something; they never do it. The tools do that.
+something; the tools do it.
 
-Load a skill with \`load_skill\` only when the request in front of you is the class of work its
-description names. Do not load one to greet someone, to say what you can do, or to answer something
-you can already answer — most turns need no skill at all. Never load the same skill twice: once its
-guidance is above, it stays available for the rest of the conversation.`;
+When a request is the class of work a skill's description names, load it with \`load_skill\` before
+you act. Its guidance is authoritative: it overrides your own defaults, so acting first and reading
+afterwards wastes the work. Load only what the request needs, and never load the same skill twice —
+its guidance stays above for the rest of the conversation.
+
+Skip skills for greetings, small talk, and questions about what you can do. Those need no guidance.`;
 
 /**
  * The base prompt plus the registry's skill index.

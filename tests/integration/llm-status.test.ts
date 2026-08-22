@@ -17,7 +17,7 @@ afterAll(async () => {
 describe("llm status", () => {
   it("reads clear when nothing has been recorded", async () => {
     await expect(readLlmStatus()).resolves.toEqual({
-      lastRoutedModel: null,
+      limitedModel: null,
       rateLimitedUntil: null,
     });
   });
@@ -27,7 +27,7 @@ describe("llm status", () => {
     await recordRateLimit({ modelId: MODEL, retryAfterSeconds: 45, now: () => now });
 
     const status = await readLlmStatus(() => now);
-    expect(status.lastRoutedModel).toBe(MODEL);
+    expect(status.limitedModel).toBe(MODEL);
     expect(status.rateLimitedUntil).toBe(new Date(now + 45_000).toISOString());
   });
 
@@ -45,7 +45,7 @@ describe("llm status", () => {
 
     const status = await readLlmStatus(() => now + 31_000);
     expect(status.rateLimitedUntil, "elapsed reads as clear, not as a stale timestamp").toBeNull();
-    expect(status.lastRoutedModel, "which model was in play still stands").toBe(MODEL);
+    expect(status.limitedModel, "which model hit the limit still stands").toBe(MODEL);
   });
 
   it("is an upsert, so repeated limits move the cooldown instead of failing", async () => {
@@ -54,7 +54,7 @@ describe("llm status", () => {
     await recordRateLimit({ modelId: "google/gemma-4-31b-it:free", retryAfterSeconds: 90, now: () => now });
 
     const status = await readLlmStatus(() => now);
-    expect(status.lastRoutedModel).toBe("google/gemma-4-31b-it:free");
+    expect(status.limitedModel).toBe("google/gemma-4-31b-it:free");
     expect(status.rateLimitedUntil).toBe(new Date(now + 90_000).toISOString());
     await expect(db.llmStatus.count()).resolves.toBe(1);
   });

@@ -148,11 +148,15 @@ export const CreditsPage = z.object({
 });
 
 /**
- * State of the shared LLM path. `rateLimitedUntil` is null once the cooldown has elapsed, so a
- * client renders it without comparing clocks.
+ * Availability of the shared LLM path, and nothing else.
+ *
+ * `rateLimitedUntil` is null once the cooldown has elapsed, so a client renders it without comparing
+ * clocks. `limitedModel` names the model that hit the limit — it is NOT "the model serving this
+ * chat", which is `ChatDTO.modelId`, nor "the model that produced this answer", which is
+ * `MessageDTO.aiModel`.
  */
 export const LlmStatus = z.object({
-  lastRoutedModel: z.string().nullable(),
+  limitedModel: z.string().nullable(),
   rateLimitedUntil: z.string().nullable(),
 });
 

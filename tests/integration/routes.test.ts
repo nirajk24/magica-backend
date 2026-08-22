@@ -635,11 +635,11 @@ describe("GET /llm/status", () => {
     const { recordRateLimit } = await import("@/lib/llm-status");
     await recordRateLimit({ modelId: "z-ai/glm-5.2:free", retryAfterSeconds: 120 });
 
-    const body = await envelope<{ lastRoutedModel: string; rateLimitedUntil: string }>(
+    const body = await envelope<{ limitedModel: string; rateLimitedUntil: string }>(
       await status(),
     );
 
-    expect(body.data?.lastRoutedModel).toBe("z-ai/glm-5.2:free");
+    expect(body.data?.limitedModel).toBe("z-ai/glm-5.2:free");
     expect(Date.parse(body.data!.rateLimitedUntil)).toBeGreaterThan(Date.now());
 
     await db.llmStatus.deleteMany({});

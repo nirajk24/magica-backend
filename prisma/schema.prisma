@@ -294,7 +294,7 @@ model UploadUsage {
 
 model LlmStatus {
   id               Int       @id @default(1)
-  lastRoutedModel  String?
+  limitedModel     String?
   rateLimitedUntil DateTime? @db.Timestamptz(3)
   createdAt        DateTime  @default(now()) @db.Timestamptz(3)
   updatedAt        DateTime  @default(now()) @updatedAt @db.Timestamptz(3)

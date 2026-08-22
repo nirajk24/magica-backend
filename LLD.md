@@ -346,7 +346,7 @@ export const ALLOWED_MODELS = [
 | 14 | `/api/v1/attachments` | GET | **6** | `?cursor&source&chatId` | `{ attachments, nextCursor }` |
 | 15 | `/api/v1/attachments/:id` | PATCH/DELETE | **6** | `{ name }` / — | `{ attachment }` / `{ ok }` |
 | 16 | `/api/v1/messages/:id/feedback` | PATCH | **6** | `{ type }` | `{ ok: true }` |
-| 17 | `/api/v1/llm/status` | GET | **2** | — | `LlmStatus` |
+| 17 | `/api/v1/llm/status` | GET | **2** | — | `LlmStatus` — availability only |
 
 ```ts
 // ─── 1. SEND — the most important contract in the system ───────────────────────
@@ -1397,6 +1397,8 @@ from here.
 | A test asserting an exact registry membership or count | the next phase that adds a tool fails it | partition by `tags`, assert `arrayContaining` for what must be present. A test that hard-codes a name or a total it does not own has an expiry date |
 | Resolving a shipped data directory with a fixed number of `..` hops | works in the repo, breaks in a bundle — a bundler flattens compiled chunks, so the file's depth below the package root is not a constant | search upward for the directory from `import.meta.dirname`, bounded, and **throw** when it is absent. An empty registry is the silent failure the search exists to prevent, so it must never be the fallback |
 | Assuming a deploy-only build extension cannot be checked locally | a real gap ships unverified | `trigger.dev deploy --dry-run` builds the full deploy bundle without deploying and prints its path. Inspect it. `additionalFiles` is a no-op in dev because dev runs from source, so the dry run is the *only* local way to see it |
+| A field whose name promises more than it holds | a client wires the model pill to `lastRoutedModel` and shows null until something breaks, then the name of the model that *failed* | it was only ever written on a rate limit. Renamed `limitedModel`, and the three model questions are answered by three different places: configured = `ChatDTO.modelId`, served = `MessageDTO.aiModel`, available = `LlmStatus` |
+| A column read everywhere and written nowhere | `MessageDTO.aiModel` was in the schema, the select, the DTO and the contract, and always null | write it at *bootstrap*, not finalize, so a turn that crashes still names the model that was working on it |
 | A fixed number of `..` hops to a shipped data directory | the bundle puts `agent-skills/` at its root and the compiled task two levels down at `src/trigger/`, so three hops lands outside the bundle entirely — measured, not guessed | search upward from `import.meta.dirname`, bounded, and throw when absent. `findSkillsDir` is extracted so a test can assert the real bundle layout |
 
 ---

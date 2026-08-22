@@ -3,6 +3,7 @@ import type { AssetDTO, ContentBlock } from "@/contracts";
 import { refundAdmission } from "@/lib/credits";
 import { db } from "@/lib/db";
 import { isUniqueViolation } from "@/lib/errors";
+import { describeModel } from "@/lib/models";
 import type { HistoryMessage } from "@/prompts/system";
 import { assetsFromInvocation } from "@/tools/assets";
 
@@ -34,11 +35,26 @@ const textOf = (blocks: ContentBlock[]) =>
  *
  * INVARIANT: insert-and-absorb, not upsert — `one_assistant_message_per_run` is a partial index
  * Prisma cannot target, and this is what makes the bootstrap idempotent with no lock.
+ *
+ * The serving model is recorded here rather than at finalize, so a turn that crashes before it
+ * finishes still says which model was working on it.
  */
-async function bootstrapAssistantMessage(a: { runId: string; chatId: string }): Promise<string> {
+async function bootstrapAssistantMessage(a: {
+  runId: string;
+  chatId: string;
+  modelId: string;
+}): Promise<string> {
+  const aiModel = describeModel(a.modelId) as unknown as Prisma.InputJsonValue;
+
   try {
     const created = await db.message.create({
-      data: { chatId: a.chatId, runId: a.runId, role: "assistant", status: "streaming" },
+      data: {
+        chatId: a.chatId,
+        runId: a.runId,
+        role: "assistant",
+        status: "streaming",
+        aiModel,
+      },
       select: { id: true },
     });
 
@@ -46,6 +62,8 @@ async function bootstrapAssistantMessage(a: { runId: string; chatId: string }): 
   } catch (error) {
     if (!isUniqueViolation(error)) throw error;
 
+    // A resumed or retried attempt already carries the model from its first bootstrap, and a chat's
+    // model cannot change under it, so there is nothing to refresh.
     const existing = await db.message.findFirstOrThrow({
       where: { runId: a.runId, role: "assistant" },
       select: { id: true },
@@ -65,7 +83,11 @@ export async function loadTurn(runId: string, triggerRunId?: string): Promise<Lo
     select: { userId: true, chatId: true, chat: { select: { modelId: true } } },
   });
 
-  const assistantMessageId = await bootstrapAssistantMessage({ runId, chatId: run.chatId });
+  const assistantMessageId = await bootstrapAssistantMessage({
+    runId,
+    chatId: run.chatId,
+    modelId: run.chat.modelId,
+  });
 
   const recent = await db.message.findMany({
     where: {

@@ -45,6 +45,54 @@ afterAll(async () => {
   await db.$disconnect();
 });
 
+describe("the serving model on the assistant row", () => {
+  it("is recorded at bootstrap, so a crash before finalize still names it", async () => {
+    const { runId } = await seedRun();
+    const turn = await loadTurn(runId);
+
+    const message = await db.message.findUniqueOrThrow({
+      where: { id: turn.assistantMessageId },
+      select: { aiModel: true, status: true },
+    });
+
+    expect(message.status, "still streaming — nothing has finalized").toBe("streaming");
+    expect(message.aiModel, "the column the pill reads must not be null").toEqual({
+      id: turn.modelId,
+      name: expect.any(String),
+      provider: expect.any(String),
+    });
+  });
+
+  it("reaches the wire, where a client can render it", async () => {
+    const { chatId, runId } = await seedRun();
+    await loadTurn(runId);
+
+    const page = await listMessages({ chatId, limit: 10 });
+    const assistant = page.messages.find((message) => message.role === "assistant");
+
+    expect(assistant?.aiModel?.provider).toBeTruthy();
+    expect(assistant?.aiModel?.name).not.toContain(":");
+  });
+
+  it("survives a resumed attempt unchanged", async () => {
+    const { runId } = await seedRun();
+    const first = await loadTurn(runId);
+    const before = await db.message.findUniqueOrThrow({
+      where: { id: first.assistantMessageId },
+      select: { aiModel: true },
+    });
+
+    const resumed = await loadTurn(runId);
+
+    expect(resumed.assistantMessageId, "same row, not a second one").toBe(first.assistantMessageId);
+    await expect(
+      db.message
+        .findUniqueOrThrow({ where: { id: first.assistantMessageId }, select: { aiModel: true } })
+        .then((row) => row.aiModel),
+    ).resolves.toEqual(before.aiModel);
+  });
+});
+
 describe("loadTurn", () => {
   it("creates the assistant row and marks the run running", async () => {
     const { runId } = await seedRun();

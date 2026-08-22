@@ -11,9 +11,8 @@ const DEFAULT_COOLDOWN_MS = 60_000;
  * Records that the shared LLM path is rate limited, so a client can say when to come back instead of
  * reporting a generic failure.
  *
- * `modelId` is the model in play when the limit was hit, which is by definition the last one routed
- * to. Only written here: a per-turn write would put an extra round trip on the hot path for a field
- * nothing reads until something has already gone wrong.
+ * `modelId` is the model that hit the limit. This table answers availability only — which model
+ * served a given answer is recorded per message, on `Message.aiModel`, where it belongs.
  */
 export async function recordRateLimit(a: {
   modelId: string;
@@ -26,8 +25,8 @@ export async function recordRateLimit(a: {
 
   await db.llmStatus.upsert({
     where: { id: ROW_ID },
-    create: { id: ROW_ID, lastRoutedModel: a.modelId, rateLimitedUntil: until },
-    update: { lastRoutedModel: a.modelId, rateLimitedUntil: until },
+    create: { id: ROW_ID, limitedModel: a.modelId, rateLimitedUntil: until },
+    update: { limitedModel: a.modelId, rateLimitedUntil: until },
   });
 }
 
@@ -38,13 +37,13 @@ export async function recordRateLimit(a: {
 export async function readLlmStatus(now: () => number = Date.now): Promise<LlmStatus> {
   const row = await db.llmStatus.findUnique({
     where: { id: ROW_ID },
-    select: { lastRoutedModel: true, rateLimitedUntil: true },
+    select: { limitedModel: true, rateLimitedUntil: true },
   });
 
   const until = row?.rateLimitedUntil ?? null;
 
   return {
-    lastRoutedModel: row?.lastRoutedModel ?? null,
+    limitedModel: row?.limitedModel ?? null,
     rateLimitedUntil: until !== null && until.getTime() > now() ? until.toISOString() : null,
   };
 }

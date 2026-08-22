@@ -115,6 +115,49 @@ export function refundToolCharge(
 }
 
 /**
+ * Adjusts a tool's charge to the cost the provider actually reported, so the ledger records real
+ * spend rather than an estimate. Call once, after the tool succeeds.
+ *
+ * INVARIANT: only call with a figure the provider actually settled. Magica documents
+ * `creditUsed: 0` as "pre-settle or free failure", so passing a zero through here would refund the
+ * whole charge for work that was really paid for.
+ *
+ * INVARIANT: an uncollectable shortfall throws `INSUFFICIENT_CREDITS`, like any other debit. Call
+ * this in its own transaction and swallow that error — the work is already done, so failing the
+ * turn over a rounding delta achieves nothing, and the rollback drops the ledger row with it.
+ *
+ * @returns the applied delta in microcredits, or null if nothing was posted.
+ */
+export async function reconcileToolCharge(
+  tx: Tx,
+  a: { userId: string; invocationId: string; runId: string; actual: bigint },
+): Promise<bigint | null> {
+  if (a.actual <= 0n) return null;
+
+  const charged = await tx.creditLedgerEntry.findUnique({
+    where: { idempotencyKey: `charge:${a.invocationId}` },
+    select: { amount: true },
+  });
+
+  if (!charged) return null;
+
+  const estimate = -charged.amount;
+  const delta = a.actual - estimate;
+  if (delta === 0n) return null;
+
+  const applied = await entry(tx, {
+    userId: a.userId,
+    type: delta > 0n ? "settle" : "refund",
+    amount: -delta,
+    key: `reconcile:${a.invocationId}`,
+    runId: a.runId,
+    invocationId: a.invocationId,
+  });
+
+  return applied ? delta : null;
+}
+
+/**
  * Reverses an earlier debit by the amount actually recorded, never a re-derived estimate.
  * A debit that never landed is a no-op.
  */

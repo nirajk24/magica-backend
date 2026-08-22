@@ -11,6 +11,22 @@ const scripts = new Map<string, Scripted>();
 export const submissions: string[] = [];
 export const polled: string[] = [];
 
+/** Mirrors the real catalog: a map keyed differently from the `nodeType` inside each entry. */
+export function catalogHandler(models?: Record<string, { nodeType: string; cost?: unknown }>) {
+  return http.get(`${BASE}/v1/models/catalog`, () =>
+    HttpResponse.json({
+      version: "v1",
+      models:
+        models ?? {
+          "gpt-image-2": {
+            nodeType: "gpt_image_2",
+            cost: { type: "per_image", value: 0.5 },
+          },
+        },
+    }),
+  );
+}
+
 export function resetMagica() {
   scripts.clear();
   submissions.length = 0;

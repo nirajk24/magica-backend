@@ -1,7 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ToolError } from "@/lib/errors";
 import { pollUntilTerminal, runMagicaNode } from "@/tools/magica-client";
-import { magicaHandlers, polled, resetMagica, submissions } from "../msw/magica";
+import {
+  ensureCatalogPricing,
+  estimateMicrocredits,
+  resetPricing,
+} from "@/tools/pricing";
+import {
+  catalogHandler,
+  magicaHandlers,
+  polled,
+  resetMagica,
+  submissions,
+} from "../msw/magica";
 import { server } from "../msw/setup";
 
 const noSleep = () => Promise.resolve();
@@ -114,5 +125,20 @@ describe("magica client", () => {
 
     await expect(pollUntilTerminal("run_stuck", noSleep)).rejects.toThrow(/did not finish in time/);
     expect(polled.filter((p) => p === "run_stuck")).toHaveLength(60);
+  });
+});
+
+describe("catalog pricing", () => {
+  it("hydrates live prices and keys them by nodeType, not the catalog map key", async () => {
+    resetPricing();
+    server.use(catalogHandler());
+
+    const applied = await ensureCatalogPricing();
+
+    expect(applied).toBe(1);
+    expect(
+      estimateMicrocredits("gpt_image_2", {}),
+      "must be reachable under the nodeType, not under 'gpt-image-2'",
+    ).toBe(500_000n);
   });
 });

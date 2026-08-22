@@ -7,6 +7,7 @@ import {
   getBalance,
   grantSignupCredits,
   refundAdmission,
+  reconcileToolCharge,
   refundToolCharge,
   reserveAdmission,
   sumLedger,
@@ -144,5 +145,111 @@ describe("credits ledger", () => {
   it("keeps the invariant through a top-up", async () => {
     await db.$transaction((tx) => topUp(tx, { userId, amount: 5_000n, key: uuidv7() }));
     expect(await expectInvariant(userId)).toBe(10_005_000n);
+  });
+});
+
+describe("reconciling a charge to the provider's real cost", () => {
+  async function chargedRun(amount = TOOL_COST) {
+    const runId = uuidv7();
+    const invocationId = uuidv7();
+    await db.$transaction((tx) => chargeTool(tx, { userId, invocationId, runId, amount }));
+    return { runId, invocationId };
+  }
+
+  it("collects the shortfall when the real cost is higher", async () => {
+    const { runId, invocationId } = await chargedRun();
+    const actual = TOOL_COST + 1_000n;
+
+    const delta = await db.$transaction((tx) =>
+      reconcileToolCharge(tx, { userId, invocationId, runId, actual }),
+    );
+
+    expect(delta).toBe(1_000n);
+    expect(await expectInvariant(userId)).toBe(10_000_000n - actual);
+  });
+
+  it("returns the overcharge when the real cost is lower", async () => {
+    const { runId, invocationId } = await chargedRun();
+    const actual = TOOL_COST - 10_000n;
+
+    const delta = await db.$transaction((tx) =>
+      reconcileToolCharge(tx, { userId, invocationId, runId, actual }),
+    );
+
+    expect(delta).toBe(-10_000n);
+    expect(await expectInvariant(userId)).toBe(10_000_000n - actual);
+  });
+
+  it("ignores creditUsed of 0, which means pre-settle and not free", async () => {
+    const { runId, invocationId } = await chargedRun();
+
+    const delta = await db.$transaction((tx) =>
+      reconcileToolCharge(tx, { userId, invocationId, runId, actual: 0n }),
+    );
+
+    expect(delta).toBeNull();
+    expect(await expectInvariant(userId), "the original charge must stand").toBe(
+      10_000_000n - TOOL_COST,
+    );
+  });
+
+  it("posts nothing when the estimate was exact", async () => {
+    const { runId, invocationId } = await chargedRun();
+
+    const delta = await db.$transaction((tx) =>
+      reconcileToolCharge(tx, { userId, invocationId, runId, actual: TOOL_COST }),
+    );
+
+    expect(delta).toBeNull();
+    expect(await expectInvariant(userId)).toBe(10_000_000n - TOOL_COST);
+  });
+
+  it("reconciles at most once", async () => {
+    const { runId, invocationId } = await chargedRun();
+    const actual = TOOL_COST + 5_000n;
+    const args = { userId, invocationId, runId, actual };
+
+    const first = await db.$transaction((tx) => reconcileToolCharge(tx, args));
+    const second = await db.$transaction((tx) => reconcileToolCharge(tx, args));
+
+    expect(first).toBe(5_000n);
+    expect(second, "a replay must not collect twice").toBeNull();
+    expect(await expectInvariant(userId)).toBe(10_000_000n - actual);
+  });
+
+  it("does not drive the balance negative to collect a shortfall", async () => {
+    const poor = await seedUser(TOOL_COST);
+    const runId = uuidv7();
+    const invocationId = uuidv7();
+    await db.$transaction((tx) =>
+      chargeTool(tx, { userId: poor, invocationId, runId, amount: TOOL_COST }),
+    );
+
+    await expect(
+      db.$transaction((tx) =>
+        reconcileToolCharge(tx, {
+          userId: poor,
+          invocationId,
+          runId,
+          actual: TOOL_COST * 2n,
+        }),
+      ),
+    ).rejects.toThrow(/Not enough credits/);
+
+    expect(await getBalance(poor), "balance stays at zero, never below").toBe(0n);
+    await expectInvariant(poor);
+  });
+
+  it("has nothing to reconcile for a charge that never landed", async () => {
+    const delta = await db.$transaction((tx) =>
+      reconcileToolCharge(tx, {
+        userId,
+        invocationId: uuidv7(),
+        runId: uuidv7(),
+        actual: 500n,
+      }),
+    );
+
+    expect(delta).toBeNull();
   });
 });

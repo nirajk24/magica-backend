@@ -124,13 +124,13 @@ describe("magica client", () => {
     server.use(...magicaHandlers({ polls: [{ status: "RUNNING" }] }));
 
     await expect(pollUntilTerminal("run_stuck", noSleep)).rejects.toThrow(/did not finish in time/);
-    expect(polled.filter((p) => p === "run_stuck")).toHaveLength(60);
+    expect(polled.filter((p) => p === "run_stuck")).toHaveLength(20);
   });
 
   it("honours a shorter budget, so a slow node type is not held to the image default", async () => {
     server.use(...magicaHandlers({ polls: [{ status: "RUNNING" }] }));
 
-    await expect(pollUntilTerminal("run_brief", noSleep, 6_000)).rejects.toThrow(
+    await expect(pollUntilTerminal("run_brief", noSleep, 18_000)).rejects.toThrow(
       /did not finish in time/,
     );
     expect(polled.filter((p) => p === "run_brief")).toHaveLength(3);

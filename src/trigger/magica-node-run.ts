@@ -70,8 +70,8 @@ export async function executeMagicaNode(
  * `retry.maxAttempts: 1` because retries are manual: an automatic one would replay narrative the
  * user has already seen and regenerate tool ids that no longer match the persisted rows.
  *
- * Sleeping through `wait.for` lets the machine suspend between polls instead of holding a CPU for
- * up to two minutes.
+ * Sleeping through `wait.for` suspends the machine between polls, which only happens for waits over
+ * Trigger.dev's 5s charge threshold — hence the poll interval in `magica-client`.
  */
 export const magicaNodeRun = task({
   id: "magica-node-run",

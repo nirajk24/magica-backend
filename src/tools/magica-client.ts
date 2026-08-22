@@ -28,7 +28,13 @@ type Sleep = (ms: number) => Promise<void>;
 
 const defaultSleep: Sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const POLL_INTERVAL_MS = 2_000;
+/**
+ * Above Trigger.dev's 5s wait-charge threshold on purpose. A shorter wait does not suspend the
+ * machine — the SDK sleeps in process and bills it — so a two-minute node run would cost two
+ * minutes of compute spent doing nothing. The cost is up to one interval of extra latency after the
+ * provider finishes.
+ */
+const POLL_INTERVAL_MS = 6_000;
 
 /** Long enough for an image; a slower node type passes its own budget. */
 export const DEFAULT_POLL_TIMEOUT_MS = 120_000;
@@ -102,8 +108,8 @@ export async function pollUntilTerminal(
  *
  * Requires a `202` specifically — any other 2xx means the contract moved.
  *
- * Pass `wait.for` as `sleep` from a Trigger.dev task so the machine suspends instead of holding a
- * CPU for two minutes.
+ * Pass `wait.for` as `sleep` from a Trigger.dev task so the machine suspends between polls; see
+ * `POLL_INTERVAL_MS` for why the interval cannot be short.
  */
 export async function runMagicaNode(a: {
   nodeType: string;

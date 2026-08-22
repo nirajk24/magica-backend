@@ -98,7 +98,6 @@ model Message {
   feedback      String?
   metadata      Json?
   errorMessage  String?
-  sequence      BigInt              @default(0)
   runId         String?
   run           AgentRun?           @relation("RunMessages", fields: [runId], references: [id], onDelete: SetNull)
   createdAt     DateTime            @default(now()) @db.Timestamptz(3)

@@ -22,13 +22,13 @@ async function main(): Promise<void> {
   });
 
   await db.creditLedgerEntry.upsert({
-    where: { idempotencyKey: `grant:${user.id}` },
+    where: { idempotencyKey: `signup_grant:${user.id}` },
     update: {},
     create: {
       userId: user.id,
       type: "signup_grant",
       amount: GRANT,
-      idempotencyKey: `grant:${user.id}`,
+      idempotencyKey: `signup_grant:${user.id}`,
     },
   });
 

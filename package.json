@@ -13,6 +13,7 @@
     "start": "next start --port 3001",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
+    "check:wiring": "tsx scripts/check-wiring.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "db:generate": "prisma generate",

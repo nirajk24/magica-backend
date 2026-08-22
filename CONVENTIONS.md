@@ -24,6 +24,10 @@ at Phase 1). Read `LLD.md` §0 before adding anything.
   with database-level defaults, so raw-SQL inserts and CDC both work.
 - **Two deploys, every time:** `pnpm build` (Vercel) does not ship tasks. Run
   `pnpm trigger:deploy` as well or the deployed tasks are stale.
+- **`pnpm check:wiring` at the end of every step.** It lists exports reached only from tests, and
+  fails on exports reached from nowhere. A module with passing tests and no caller is not finished —
+  that pattern has already shipped three times here. Account for every line: either it is the next
+  step's work, or it is a wiring bug.
 - **After any migration, `pnpm db:generate`.** `migrate dev` syncs the database but leaves the
   generated client describing the old schema, so the next query sends a column that no longer
   exists. `tests/integration/schema.test.ts` asserts the shape the code depends on.

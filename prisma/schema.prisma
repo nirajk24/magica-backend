@@ -1,0 +1,343 @@
+generator client {
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  moduleFormat    = "esm"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  extensions = [pg_trgm]
+}
+
+// ───────────────────────── users & credits ─────────────────────────
+
+model User {
+  id            String              @id
+  email         String              @unique
+  name          String?
+  creditBalance BigInt              @default(0)
+  createdAt     DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime            @default(now()) @updatedAt @db.Timestamptz(3)
+  chats         Chat[]
+  ledger        CreditLedgerEntry[]
+  attachments   Attachment[]
+}
+
+enum LedgerEntryType {
+  signup_grant
+  top_up
+  reserve
+  settle
+  refund
+}
+
+model CreditLedgerEntry {
+  id             String          @id @default(uuid(7))
+  userId         String
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type           LedgerEntryType
+  amount         BigInt
+  idempotencyKey String          @unique
+  runId          String?
+  invocationId   String?
+  createdAt      DateTime        @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime        @default(now()) @updatedAt @db.Timestamptz(3)
+
+  @@index([userId, createdAt(sort: Desc)])
+}
+
+// ───────────────────────── chats & messages ─────────────────────────
+
+model Chat {
+  id         String     @id @default(uuid(7))
+  userId     String
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title      String     @default("New task")
+  isFavorite Boolean    @default(false)
+  modelId    String     @default("google/gemma-4-31b-it:free")
+  activePlan Json?
+  deletedAt  DateTime?  @db.Timestamptz(3)
+  createdAt  DateTime   @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime   @default(now()) @updatedAt @db.Timestamptz(3)
+  messages   Message[]
+  runs       AgentRun[]
+
+  @@index([userId, updatedAt(sort: Desc), id])
+  @@index([userId, isFavorite])
+  @@index([title(ops: raw("gin_trgm_ops"))], type: Gin)
+}
+
+enum MessageRole {
+  user
+  assistant
+  system
+  tool
+}
+
+enum MessageStatus {
+  streaming
+  success
+  failed
+  cancelled
+}
+
+model Message {
+  id            String              @id @default(uuid(7))
+  chatId        String
+  chat          Chat                @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  role          MessageRole
+  status        MessageStatus       @default(success)
+  content       String              @default("")
+  contentBlocks Json?
+  attachments   Json?
+  assets        Json?
+  aiModel       Json?
+  tokenUsage    Json?
+  creditUsed    BigInt              @default(0)
+  feedback      String?
+  metadata      Json?
+  errorMessage  String?
+  sequence      BigInt              @default(0)
+  runId         String?
+  run           AgentRun?           @relation("RunMessages", fields: [runId], references: [id], onDelete: SetNull)
+  createdAt     DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime            @default(now()) @updatedAt @db.Timestamptz(3)
+  startedRun    AgentRun?           @relation("RunUserMessage")
+  producedByRun AgentRun?           @relation("RunAssistantMessage")
+  linkedFiles   MessageAttachment[]
+
+  @@index([chatId, createdAt(sort: Desc), id])
+  @@index([content(ops: raw("gin_trgm_ops"))], type: Gin)
+}
+
+// ───────────────────────── runs & execution ─────────────────────────
+
+enum RunStatus {
+  queued
+  running
+  waiting
+  completed
+  failed
+  cancelled
+}
+
+model AgentRun {
+  id                 String           @id @default(uuid(7))
+  chatId             String
+  chat               Chat             @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  userId             String
+  status             RunStatus        @default(queued)
+  triggerRunId       String?          @unique
+  userMessageId      String           @unique
+  userMessage        Message          @relation("RunUserMessage", fields: [userMessageId], references: [id], onDelete: Cascade)
+  assistantMessageId String?          @unique
+  assistantMessage   Message?         @relation("RunAssistantMessage", fields: [assistantMessageId], references: [id], onDelete: SetNull)
+  attempt            Int              @default(1)
+  executionMode      String           @default("auto")
+  idempotencyKey     String           @unique
+  turns              Int              @default(0)
+  failureReason      String?
+  createdAt          DateTime         @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime         @default(now()) @updatedAt @db.Timestamptz(3)
+  messages           Message[]        @relation("RunMessages")
+  invocations        ToolInvocation[]
+  skills             RunSkill[]
+  waitpoints         Waitpoint[]
+
+  @@index([chatId, status])
+}
+
+enum InvocationStatus {
+  pending
+  running
+  completed
+  failed
+  cancelled
+}
+
+model ToolInvocation {
+  id           String           @id @default(uuid(7))
+  toolUseId    String
+  runId        String
+  run          AgentRun         @relation(fields: [runId], references: [id], onDelete: Cascade)
+  toolName     String
+  status       InvocationStatus @default(pending)
+  input        Json
+  output       Json?
+  errorMessage String?
+  magicaRunId  String?
+  creditUsed   BigInt           @default(0)
+  startedAt    DateTime?        @db.Timestamptz(3)
+  completedAt  DateTime?        @db.Timestamptz(3)
+  createdAt    DateTime         @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime         @default(now()) @updatedAt @db.Timestamptz(3)
+  attachments  Attachment[]
+
+  @@unique([runId, toolUseId])
+  @@index([runId])
+  @@index([magicaRunId])
+}
+
+model RunSkill {
+  id          String   @id @default(uuid(7))
+  runId       String
+  run         AgentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  skillName   String
+  contentHash String
+  assetPath   String   @default("")
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+
+  @@unique([runId, skillName, assetPath])
+}
+
+enum WaitpointStatus {
+  pending
+  completed
+  expired
+}
+
+enum WaitpointKind {
+  plan_approval
+  questions
+}
+
+model Waitpoint {
+  id           String          @id
+  runId        String
+  run          AgentRun        @relation(fields: [runId], references: [id], onDelete: Cascade)
+  kind         WaitpointKind
+  status       WaitpointStatus @default(pending)
+  payload      Json
+  resolution   Json?
+  invocationId String?
+  createdAt    DateTime        @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime        @default(now()) @updatedAt @db.Timestamptz(3)
+
+  @@index([runId, status])
+}
+
+// ───────────────────────── attachments ─────────────────────────
+
+enum AttachmentStatus {
+  uploading
+  ready
+  failed
+  cancelled
+}
+
+enum AttachmentSource {
+  uploaded
+  generated
+}
+
+model Attachment {
+  id               String              @id @default(uuid(7))
+  userId           String
+  user             User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  source           AttachmentSource    @default(uploaded)
+  chatId           String?
+  toolInvocationId String?
+  toolInvocation   ToolInvocation?     @relation(fields: [toolInvocationId], references: [id], onDelete: SetNull)
+  status           AttachmentStatus    @default(uploading)
+  assemblyId       String?             @unique
+  type             String
+  url              String?
+  name             String
+  contentType      String
+  size             Int
+  metadata         Json?
+  expiresAt        DateTime?           @db.Timestamptz(3)
+  createdAt        DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime            @default(now()) @updatedAt @db.Timestamptz(3)
+  messageLinks     MessageAttachment[]
+
+  @@index([userId, createdAt(sort: Desc), id])
+  @@index([chatId])
+}
+
+model MessageAttachment {
+  messageId    String
+  attachmentId String
+  position     Int
+  message      Message    @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  attachment   Attachment @relation(fields: [attachmentId], references: [id], onDelete: Cascade)
+  createdAt    DateTime   @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime   @default(now()) @updatedAt @db.Timestamptz(3)
+
+  @@id([messageId, attachmentId])
+  @@index([attachmentId])
+}
+
+// ───────────────── quota / status / rate limit ─────────────────
+
+model SendRateLimit {
+  userId    String
+  window    String
+  count     Int      @default(0)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+
+  @@id([userId, window])
+}
+
+model UploadUsage {
+  userId    String
+  period    String
+  bytesUsed BigInt   @default(0)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+
+  @@id([userId, period])
+}
+
+model LlmStatus {
+  id               Int       @id @default(1)
+  lastRoutedModel  String?
+  rateLimitedUntil DateTime? @db.Timestamptz(3)
+  createdAt        DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime  @default(now()) @updatedAt @db.Timestamptz(3)
+}
+
+// ───────────────── bonus tier (tables exist from migration #1) ─────────────────
+
+model ApiKey {
+  id        String    @id @default(uuid(7))
+  userId    String
+  hashedKey String    @unique
+  name      String
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime  @default(now()) @updatedAt @db.Timestamptz(3)
+  revokedAt DateTime? @db.Timestamptz(3)
+
+  @@index([userId])
+}
+
+model WebhookEndpoint {
+  id         String            @id @default(uuid(7))
+  userId     String
+  url        String
+  secret     String
+  events     String[]
+  createdAt  DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime          @default(now()) @updatedAt @db.Timestamptz(3)
+  deliveries WebhookDelivery[]
+
+  @@index([userId])
+}
+
+model WebhookDelivery {
+  id            String          @id @default(uuid(7))
+  endpointId    String
+  endpoint      WebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  event         String
+  payload       Json
+  status        String
+  attempts      Int             @default(0)
+  lastAttemptAt DateTime?       @db.Timestamptz(3)
+  createdAt     DateTime        @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime        @default(now()) @updatedAt @db.Timestamptz(3)
+
+  @@index([endpointId, createdAt(sort: Desc)])
+}

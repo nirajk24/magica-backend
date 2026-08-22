@@ -2,17 +2,15 @@ import { defineConfig } from "@trigger.dev/sdk";
 import { prismaExtension } from "@trigger.dev/build/extensions/prisma";
 
 /**
- * The project ref is an identifier, not a secret — TRIGGER_SECRET_KEY is what authorises
- * anything — so it is committed rather than read from the environment, which is also the only
- * way `trigger.dev deploy` can resolve it without a loaded `.env`.
+ * `project` is committed because `deploy` resolves it without a loaded `.env`. It is an
+ * identifier, not a secret.
  *
- * `mode: "modern"` is the Prisma 7 path: it marks the client external and expects
- * `prisma generate` to have run, which `postinstall` handles on the build machine too.
- * Without this extension the tasks build fine and then crash in production only.
+ * `mode: "modern"` is the Prisma 7 path — it marks the client external and expects
+ * `prisma generate` to have run, which `postinstall` covers. Omitting the extension builds fine
+ * and crashes in production only.
  *
- * `maxAttempts: 1` is decision #20 — retries are manual. An automatic retry would replay a
- * turn that already spent credits and already streamed narrative, and regenerated tool ids
- * would never match the persisted ones.
+ * `maxAttempts: 1` because retries are manual: an automatic one replays a turn that already spent
+ * credits, and regenerated tool ids would not match the persisted ones.
  */
 export default defineConfig({
   project: "proj_mjuwxfvzechgbshfifzv",

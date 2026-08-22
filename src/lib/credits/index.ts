@@ -16,32 +16,19 @@ type EntryArgs = {
 };
 
 /**
- * The single writer of `CreditLedgerEntry` and `User.creditBalance`. Nothing else in the
- * codebase may touch either, because the invariant `balance === SUM(ledger)` is only
- * defensible if there is exactly one place that can break it.
+ * Applies one ledger entry and moves the cached balance. The ledger is the source of truth;
+ * `User.creditBalance` is a cache of `SUM(ledger)`.
  *
- * Ledger row FIRST, then the balance, and the duplicate is caught by `ON CONFLICT DO NOTHING`
- * rather than by a thrown exception. Both halves of that matter:
+ * Order is load-bearing: the row is inserted first and duplicates absorbed by `ON CONFLICT DO
+ * NOTHING`, so the unique index rather than an exception decides whether this is the first
+ * application. Moving the balance first double-charges on replay; catching `P2002` instead
+ * aborts the caller's Postgres transaction.
  *
- * - Moving the balance first double-charges on retry — the decrement runs again, the insert
- *   then collides, and the caller sees success while `balance` has silently drifted.
- * - Catching a `P2002` instead aborts the enclosing Postgres transaction, so every later
- *   statement fails with "current transaction is aborted". `reserveAdmission` runs inside the
- *   send route's transaction alongside the message and run inserts, which would have taken the
- *   whole send down.
+ * INVARIANT: an uncoverable debit throws once its ledger row already exists. A caller that
+ * catches `INSUFFICIENT_CREDITS` must roll the surrounding transaction back, or the row survives
+ * with no matching balance move.
  *
- * Insert-first inverts both: the unique index decides whether this is the first application,
- * the row count reports it without raising, and the balance only moves when the ledger grew.
- * A crash between the two statements can therefore only understate the cache, which is
- * recomputable — never a phantom charge.
- *
- * INVARIANT FOR CALLERS: a debit that cannot be covered throws `INSUFFICIENT_CREDITS` after
- * the ledger row is already inserted. Callers that intend to CATCH that error must have called
- * this inside a transaction they then roll back, or the row survives with no matching balance
- * move. The tool wrapper does exactly that — it charges in its own short transaction so the
- * rollback is scoped to the charge.
- *
- * @returns true if this call applied the entry, false if it was a replay of an existing key.
+ * @returns true if applied, false if the key was already present.
  */
 async function entry(tx: Tx, { userId, type, amount, key, runId, invocationId }: EntryArgs) {
   const inserted = await tx.$executeRaw`
@@ -71,10 +58,11 @@ async function entry(tx: Tx, { userId, type, amount, key, runId, invocationId }:
 }
 
 /**
- * Fixed hold taken when a turn is admitted, inside the send route's transaction so a rejected
- * send leaves no trace. It is ALWAYS refunded in full at terminal, which is what makes the net
- * cost of a turn equal the sum of its tool charges — the earlier reserve/settle/refund-remainder
- * model double-charged.
+ * Fixed hold taken when a turn is admitted. Call inside the send route's transaction so a
+ * rejected send leaves no trace.
+ *
+ * INVARIANT: always refunded in full at terminal, so the net cost of a turn is the sum of its
+ * tool charges.
  */
 export function reserveAdmission(tx: Tx, a: { userId: string; runId: string }) {
   return entry(tx, {
@@ -96,9 +84,8 @@ export function refundAdmission(tx: Tx, a: { userId: string; runId: string }) {
 }
 
 /**
- * Charged BEFORE the tool executes, so mid-turn exhaustion is caught before an external cost is
- * incurred and there is never a late-settle race. Keyed on the invocation, so a replayed step
- * charges once.
+ * Charges one tool invocation. Call BEFORE executing it, so exhaustion is caught before an
+ * external cost is incurred. Keyed on the invocation, so a replayed step charges once.
  */
 export function chargeTool(
   tx: Tx,
@@ -128,10 +115,8 @@ export function refundToolCharge(
 }
 
 /**
- * Reverses an earlier debit by reading the amount actually recorded, never by re-deriving it.
- * A failed tool must give back exactly what it took: re-estimating could refund more than was
- * charged, and an estimator whose inputs changed would refund a different number entirely.
- * A debit that never landed has nothing to reverse, so this is a no-op.
+ * Reverses an earlier debit by the amount actually recorded, never a re-derived estimate.
+ * A debit that never landed is a no-op.
  */
 async function reverse(
   tx: Tx,
@@ -160,10 +145,7 @@ async function reverse(
   });
 }
 
-/**
- * Granted on a user's first authenticated request rather than by the Clerk webhook, so a
- * missing or delayed webhook cannot leave an account unable to do anything.
- */
+/** Granted on first authenticated request, so a missing Clerk webhook cannot block an account. */
 export function grantSignupCredits(tx: Tx, a: { userId: string }) {
   return entry(tx, {
     userId: a.userId,
@@ -190,7 +172,7 @@ export async function getBalance(userId: string): Promise<bigint> {
   return user.creditBalance;
 }
 
-/** The authoritative figure. `User.creditBalance` is a cache of this and is asserted against it. */
+/** The authoritative figure `User.creditBalance` is asserted against. */
 export async function sumLedger(userId: string): Promise<bigint> {
   const { _sum } = await db.creditLedgerEntry.aggregate({
     where: { userId },

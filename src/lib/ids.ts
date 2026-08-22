@@ -1,11 +1,10 @@
 import { randomBytes } from "node:crypto";
 
 /**
- * UUIDv7 — a 48-bit big-endian millisecond timestamp followed by random bits, so ids sort by
- * creation time. The schema declares `@default(uuid(7))`, but Prisma generates that client-side
- * and `lib/credits` inserts through raw SQL, which bypasses it. Using v4 there instead would
- * silently give the ledger's primary key random ordering and lose index locality on the one
- * table that only ever grows.
+ * UUIDv7 — a millisecond timestamp followed by random bits, so ids sort by creation time.
+ *
+ * Needed because Prisma generates `@default(uuid(7))` client-side, which raw-SQL inserts bypass.
+ * A v4 id there would give an append-only table randomly ordered keys.
  */
 export function uuidv7(): string {
   const bytes = randomBytes(16);

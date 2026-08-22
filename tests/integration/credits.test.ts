@@ -19,12 +19,7 @@ const TOOL_COST = 210_720n;
 let userId: string;
 const created: string[] = [];
 
-/**
- * Funds through the ledger rather than writing `creditBalance` directly. Setting the column by
- * hand would seed a user who already violates `balance === SUM(ledger)`, so every assertion
- * would be measured against a broken starting point — and there is no legitimate path in the
- * app that produces a balance with no rows behind it.
- */
+/** Funds through the ledger; setting `creditBalance` directly would seed a broken invariant. */
 async function seedUser(balance: bigint) {
   const id = `test_${uuidv7()}`;
   created.push(id);

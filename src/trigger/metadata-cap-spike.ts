@@ -2,16 +2,9 @@ import { metadata, task } from "@trigger.dev/sdk";
 import { RunMetadata } from "@/contracts";
 
 /**
- * Spike for dry-run finding F5, not shipped behaviour.
- *
- * `RunMetadata` is re-sent whole on every update, and the 3 MB figure quoted in the LLD is the
- * task PAYLOAD cap — run metadata has its own, smaller, server-enforced limit with no constant
- * exposed in the SDK. The `blocks` projection exists to keep the snapshot bounded, so the bound
- * has to be measured rather than assumed.
- *
- * Writes a deliberately worst-case snapshot and reports the byte size that was accepted. If the
- * write is rejected, the projection loses its `.max(60)` bound and gains `blocksTruncated`, and
- * the frontend renders only the live tail — it already holds full history from REST.
+ * Spike, not shipped behaviour. Writes worst-case `RunMetadata` snapshots and reports the byte
+ * size each one accepted, because the run-metadata size limit is server-enforced and the SDK
+ * exposes no constant for it.
  */
 function worstCaseMetadata(blockCount: number, reasoningChars: number): RunMetadata {
   return {

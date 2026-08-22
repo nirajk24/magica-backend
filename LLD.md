@@ -458,7 +458,8 @@ const Env = z.object({
   MAGICA_BASE_URL: z.string().url().default("https://inference.magica.com"),
   FRONTEND_URL: z.string().url(),
   ADMISSION_CREDITS: z.coerce.bigint().default(500_000n),
-  MAX_TURNS: z.coerce.number().default(12),
+  MAX_TURNS: z.coerce.number().default(12),   // our outer loop: streamText calls per turn
+  MAX_STEPS: z.coerce.number().default(8),    // SDK inner loop: tool rounds inside ONE streamText
   DEMO_MODE: bool.default("false"),
   DISABLE_TITLE_GEN: bool.default("false"),
 });
@@ -688,6 +689,10 @@ trigger.config.ts
 tests/msw/magica.ts, tests/msw/openrouter.ts
 ```
 
+`vitest.config.ts` ships in Phase 0 and already points its integration project at
+`tests/msw/setup.ts`, which does not exist until this phase — so `pnpm test` does nothing useful
+before now. Expected, not a break.
+
 #### 4.1.1 `lib/credits` — build this before the send route
 
 ```ts
@@ -847,14 +852,14 @@ export async function runAgentTurn(deps: Deps, { runId }: { runId: string }) {
       model: openrouter(run.modelId),
       messages: toModelMessages(history, blocks),
       tools: toAiSdkTools(registry, ctx),
-      stopWhen: [stepCountIs(env.MAX_TURNS), hasToolCall("submit_plan"),
+      stopWhen: [stepCountIs(env.MAX_STEPS), hasToolCall("submit_plan"),
                  hasToolCall("ask_questions")],
     });
 
     let textOpen = false;
     for await (const part of stream.fullStream) {
       switch (part.type) {
-        case "text-delta":                          // v5 carries `.text` (F4)
+        case "text-delta":                          // v7 carries `.text` (F4)
           await deps.agentText.append(part.text);
           textOpen = true; bufferText(part.text);
           break;
@@ -871,7 +876,7 @@ export async function runAgentTurn(deps: Deps, { runId }: { runId: string }) {
         case "tool-call":
           if (textOpen) { closeTextBlock(); segment++; textOpen = false; }   // gap 3
           blocks.push({ segment, type: "tool_use", id: part.toolCallId,
-                        name: part.toolName, input: part.input });   // v5: `.input`, not `.args` (F4)
+                        name: part.toolName, input: part.input });   // v7: `.input`, not `.args` (F4)
           await deps.persistBlocks(blocks);         // progressive persistence
           await deps.metadata.set({ phase: "working",
                                     currentStep: registry[part.toolName].display.label,
@@ -887,7 +892,7 @@ export async function runAgentTurn(deps: Deps, { runId }: { runId: string }) {
                                                return deps.finalizeFailed("empty response"); }
 
     // 3. WAITPOINT — task level, never inside a live stream
-    // An interaction tool has NO `execute`, so v5 emits the call and ends the step; `stopWhen` halts
+    // An interaction tool has NO `execute`, so v7 emits the call and ends the step; `stopWhen` halts
     // the loop. The resolution MUST go back as a tool-result message or the model repeats the call.
     // suspendOn() MUST metadata.flush() BEFORE wait.forToken (dry-run F11): Trigger.dev BATCHES
     // metadata writes, so a bare set() may not have left the machine when the run suspends. A client
@@ -1083,8 +1088,9 @@ Build response bodies from the same schemas the routes parse. Magica fixtures se
 live catalog (`docs/api-notes/magica-docs/required-tools-schemas.json`) rather than from memory — the
 catalog is on disk precisely so the mocks match the real API by construction.
 
-Related: AI SDK v5 emits `tool-call-delta` parts carrying `argsTextDelta` **and** a final `tool-call`
-with complete `input`. We handle only `tool-call`, so there is no partial-argument assembler to write.
+Related: AI SDK v7 streams tool input as `tool-input-start` / `tool-input-delta` (field
+`inputTextDelta`) / `tool-input-end`, **and** emits a final `tool-call` carrying the complete `input`.
+We handle only `tool-call`, so there is no partial-argument assembler to write.
 
 **OpenRouter budget (50/day, hard):** all automated tests = **0 requests**. Dev checks ≤20/day.
 Acceptance ~10, once. Demo ~20 headroom, recorded right after the daily reset.
@@ -1125,3 +1131,5 @@ A reviewer will pick from this list.
 | `channel_binding=require` | Prisma may object | drop that param only if it complains (psql was fine) |
 | Neon scale-to-zero | first query after idle is slow | warm the app before recording the demo |
 | 10 concurrent realtime connections (free tier) | dropped subscriptions | close on unmount; one browser tab for the demo |
+| Trigger.dev env vars set to only the obvious three | **every** task crashes at boot with a Zod error | tasks import `lib/db.ts` → `lib/env.ts`, which parses the **whole** schema at import. The dashboard needs every non-optional variable — including `DATABASE_URL_UNPOOLED` and `FRONTEND_URL`, which a task never uses |
+| `prisma generate` in `postinstall` reading config through Prisma's `env()` | `pnpm install` fails on a fresh clone with no `.env` | `prisma.config.ts` resolves the URL permissively; `lib/env.ts` is what fails by name, at app boot |

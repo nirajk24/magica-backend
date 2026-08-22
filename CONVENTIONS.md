@@ -25,15 +25,14 @@ at Phase 1). Read `LLD.md` §0 before adding anything.
 - **Two deploys, every time:** `pnpm build` (Vercel) does not ship tasks. Run
   `pnpm trigger:deploy` as well or the deployed tasks are stale.
 - **`pnpm trigger:dev` must boot at the end of every step that touches `src/trigger/` or anything
-  it imports.** A task's entire import graph runs at index time, so a module that spawns a thread at
-  import — a pino transport is the one that bit us — fails the *build* with a message naming nothing
-  relevant, while `tsc`, `eslint`, `next build` and the whole test suite stay green.
+  it imports.** A task's entire import graph runs at index time, so a module that spawns a thread or
+  a subprocess at import fails the *build*, with a message naming nothing relevant — while `tsc`,
+  `eslint`, `next build` and the whole test suite stay green. A pino transport does exactly this.
 - **`src/trigger/` holds task definitions only.** Trigger builds every file in it as an entry point;
   the agent implementation lives in `src/agent/`.
 - **`pnpm check:wiring` at the end of every step.** It lists exports reached only from tests, and
-  fails on exports reached from nowhere. A module with passing tests and no caller is not finished —
-  that pattern has already shipped three times here. Account for every line: either it is the next
-  step's work, or it is a wiring bug.
+  fails on exports reached from nowhere. A module with passing tests and no caller is not finished.
+  Account for every line: either it is the next step's work, or it is a wiring bug.
 - **After any migration, `pnpm db:generate`.** `migrate dev` syncs the database but leaves the
   generated client describing the old schema, so the next query sends a column that no longer
   exists. `tests/integration/schema.test.ts` asserts the shape the code depends on.
@@ -46,6 +45,6 @@ at Phase 1). Read `LLD.md` §0 before adding anything.
 
 No inline comments. JSDoc only on exported module boundaries — one block saying what it does
 and any invariant a caller must not break. Strict TS and Zod schemas are the documentation.
-Reasons live in `docs/decisions.md`, not in the code.
+Reasons belong in the design docs, not in the code.
 
 <!-- TRIGGER.DEV SKILLS START --><!-- TRIGGER.DEV SKILLS END -->

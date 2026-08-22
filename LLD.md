@@ -21,10 +21,9 @@ Phase 1 slice:   auth → send → durable dispatch → agent loop → ONE tool 
                  └──────────────── every layer touched, nothing stubbed ───────────────────────────────────┘
 ```
 
-Why: the grading weights are Architecture 25% · Reliability 20% · Fidelity 20% · Code quality 15% ·
-**Features 10%** · Polish 10%. A narrow path with real idempotency, real failure handling and real
-recovery outscores a wide surface of half-features. Feature completeness is the *cheapest* criterion
-to lose points on.
+Why: a narrow path with real idempotency, real failure handling and real recovery is worth more than
+a wide surface of half-features. Breadth is the easiest thing to add later and the hardest thing to
+retrofit correctness into.
 
 ### What makes later phases safe
 
@@ -60,7 +59,7 @@ earlier code:
 | Media library, files-in-task modal, attachment rename/delete | new routes over an existing table | 6 |
 | `/messages/:id/feedback`, `/llm/status` | leaf routes, one column / one row each | 6 |
 | Public API, signed webhooks, Mintlify | tables exist from migration #1 | 7 |
-| `credit_approval`, `media_selector` kinds | **declined** — see decisions #43 | — |
+| `credit_approval`, `media_selector` kinds | **declined** — not required by the scope | — |
 
 ### Non-deferrable — do not be tempted
 
@@ -68,7 +67,7 @@ earlier code:
 |---|---|
 | Credits ledger (`lib/credits`) | the send route reserves admission in the same transaction as run creation. Retrofitting money into a live write path is how double-charges are born |
 | Idempotency keys | `AgentRun.idempotencyKey`, `charge:{invocationId}` etc. are unique **constraints**. Adding them later means backfilling and a migration against real rows |
-| Progressive persistence | partial-output-survives-crash is a graded requirement; bolting it on means rewriting the loop |
+| Progressive persistence | partial output must survive a crash; bolting it on means rewriting the loop |
 | `defineRoute` wrapper | auth + Zod + error envelope + traceId in one place. Written after 10 routes = 10 inconsistent routes |
 | Structured logging | the six required keys must be bound at bootstrap. Retro-fitting loses the correlation |
 
@@ -81,7 +80,7 @@ magica-backend/
 ├── prisma/
 │   ├── schema.prisma                  Phase 0 — full schema, all tables, migration #1
 │   ├── migrations/                    + 2 raw-SQL migrations (partial unique indexes, pg_trgm)
-│   └── seed.ts                        Phase 0 — demo user + chats. MOVED from Phase 2 (dry-run F14):
+│   └── seed.ts                        Phase 0 — demo user + chats. Moved from Phase 2:
 │                                       single Neon branch + Phase-1 schema churn means every
 │                                       `migrate reset` wipes the data Phase 1 tests against
 ├── prisma.config.ts                   Phase 0
@@ -197,7 +196,7 @@ export const BlockProjection = z.object({
 export type BlockProjection = z.infer<typeof BlockProjection>;
 ```
 
-**How one flat stream feeds many text blocks (dry-run F16).** `agentText` is a single append-only
+**How one flat stream feeds many text blocks.** `agentText` is a single append-only
 stream, but a `text → tool → text` turn produces two separate text blocks. Without a rule the
 frontend cannot tell which characters belong to which block.
 
@@ -250,7 +249,7 @@ export const ToolInvocationDTO = z.object({
   id: z.string(),
   toolUseId: z.string(),
   toolName: z.string(),
-  display: z.object({ label: z.string(), icon: z.string() }),  // from the registry (gap 8)
+  display: z.object({ label: z.string(), icon: z.string() }),  // from the registry
   status: InvocationStatus,
   input: z.unknown(),                   // sanitized
   output: z.unknown().nullable(),
@@ -365,7 +364,7 @@ export const SendMessageResult = z.object({
   triggerRunId: z.string().nullable(),          // run_xxx — useRealtimeRun ONLY. null if dispatch pending
   publicAccessToken: z.string(),                // 15-min Trigger.dev read token
 });
-// TWO IDS, NEVER CONFLATED (dry-run F2). ARCHITECTURE §4.1 returned `runId: handle.id`, which
+// TWO IDS, NEVER CONFLATED. ARCHITECTURE §4.1 returned `runId: handle.id`, which
 // collided with /runs/:id/cancel resolving :id as AgentRun.id. Both returned, named for their use.
 
 // ─── 3. ACTIVE RUN — the reload workhorse ──────────────────────────────────────
@@ -414,12 +413,12 @@ export const RunMetadata = z.object({
   phaseStartedAt: z.number(),                   // epoch ms → live duration counter
   currentStep: z.string().optional(),
   stepsCompleted: z.number(),
-  blocks: z.array(BlockProjection).max(60),     // ORDERED live narrative (gap 1). Bound confirmed by
-                                                // the F5 spike (#50); the projection is sliced to the
+  blocks: z.array(BlockProjection).max(60),     // ORDERED live narrative. Bound confirmed by
+                                                // measurement; the projection is sliced to the
                                                 // newest 60 because a rejected snapshot kills the turn.
-  reasoningText: z.string().max(4_000).optional(),  // streaming Thinking row (gap 2), bounded TAIL —
-                                                // metadata is re-sent whole on every delta (#50)
-  activePlan: z.json().optional(),              // plan-progress card (gap 4). z.json(), never
+  reasoningText: z.string().max(4_000).optional(),  // streaming Thinking row, bounded TAIL —
+                                                // metadata is re-sent whole on every delta
+  activePlan: z.json().optional(),              // plan-progress card. z.json(), never
                                                 // z.unknown(): metadata.set() needs DeserializedJson
   invocations: z.array(z.object({
     id: z.string(), toolUseId: z.string(), toolName: z.string(),
@@ -451,7 +450,7 @@ append-only text stream. If you ever add a field, ask "does this grow with turn 
 ```ts
 import { z } from "zod";
 
-// z.coerce.boolean() is a TRAP (dry-run F3): Boolean("false") === true, so DEMO_MODE=false
+// z.coerce.boolean() is a TRAP: Boolean("false") === true, so DEMO_MODE=false
 // would ENABLE demo mode. Parse the two literals explicitly.
 const bool = z.enum(["true", "false"]).transform((v) => v === "true");
 
@@ -482,7 +481,7 @@ two different loops: `MAX_TURNS` bounds our outer `while` (one `streamText` call
 bounds the SDK's inner tool-round loop inside a single call. Every inner step is one OpenRouter
 request against a **50/day** ceiling, so a worst-case turn costs `MAX_TURNS × MAX_STEPS`.
 
-Decision #45b set "6, and 12 for the demo" when there was only one loop; that reasoning was always
+The original "6, and 12 for the demo" assumed a single loop; that reasoning was always
 about total requests, so it now applies to the product. At 4 × 6 the worst case is **24 requests —
 half the daily budget in one turn**, which is the real bound and worth stating rather than hiding.
 `MAX_TURNS` is only re-entered by an empty-stream retry (capped at 1) and a waitpoint resumption, so
@@ -491,7 +490,7 @@ half the daily budget in one turn**, which is the real bound and worth stating r
 **For the demo, raise ONE of them, never both.** 4 × 12 = 48 is the entire daily allowance in a
 single turn.
 
-**`prisma/schema.prisma` datasource (dry-run F7)** — `prisma migrate` takes a Postgres advisory lock
+**`prisma/schema.prisma` datasource** — `prisma migrate` takes a Postgres advisory lock
 that does not survive pgBouncer, so migrations must run on the direct URL:
 
 ```prisma
@@ -563,7 +562,7 @@ instead of leaving an account stuck at zero.
 `ensureUserWithGrant` is why the Clerk webhook is a *bonus* and not a blocker: the first
 authenticated request creates the user row and grants signup credits, keyed `grant:{userId}`.
 
-**`middleware.ts` — order is load-bearing (dry-run F1).** Two repos means two origins, so there are
+**`middleware.ts` — order is load-bearing.** Two repos means two origins, so there are
 no cookies: the frontend sends `Authorization: Bearer <getToken()>` on every request.
 
 ```ts
@@ -573,7 +572,7 @@ export default clerkMiddleware({ authorizedParties: [env.FRONTEND_URL] });
 // is never sent. No cookies, no Allow-Credentials.
 ```
 
-**`P2002` is attributed per call site, never around the transaction (dry-run F8).** Two different
+**`P2002` is attributed per call site, never around the transaction.** Two different
 unique violations can fire inside the send transaction and they mean opposite things:
 
 | Violation | Meaning | Response |
@@ -661,7 +660,7 @@ CREATE INDEX chat_title_trgm   ON "Chat"    USING GIN (title gin_trgm_ops);
 CREATE INDEX message_content_trgm ON "Message" USING GIN (content gin_trgm_ops);
 ```
 
-**Migration sequence (dry-run F9)** — `migrate dev` generates SQL from the schema and cannot invent
+**Migration sequence** — `migrate dev` generates SQL from the schema and cannot invent
 our partial indexes, so 002 and 003 are created empty and hand-edited:
 ```bash
 pnpm prisma migrate dev --name init
@@ -672,7 +671,7 @@ pnpm prisma migrate dev                                              # apply 002
 
 **DoD**
 - `pnpm dev` boots; `GET /api/v1/health` returns `{data:{ok:true}}`
-- `app/page.tsx` and `app/globals.css` from `create-next-app` are **deleted** (F10) — the backend
+- `app/page.tsx` and `app/globals.css` from `create-next-app` are **deleted** — the backend
   serves only `app/api/**`, and a stray Next welcome page on the deployed API reads as carelessness
 - `pnpm prisma migrate dev` applies clean against Neon; `psql` shows both partial indexes
 - Deleting one env var crashes the boot with that variable's name in the message
@@ -687,29 +686,26 @@ pnpm prisma migrate dev                                              # apply 002
 **Goal:** *"generate an image of a mountain"* → durable run → live stream → tool card → asset
 persisted → **reload mid-run and it keeps going.**
 
-This is the phase that wins or loses the trial. Everything after it is widening.
+This is the phase everything else builds on. Everything after it is widening.
 
 **Write in this order.** Steps 1–4 need no Trigger.dev, no Clerk and no frontend, and they hold the
 highest-risk logic — the cheapest place to be wrong.
 
 ```
-0  trigger.config.ts + the F5 metadata spike                         DONE (session 6)
-1  lib/credits              + unit test asserting balance === SUM(ledger)   DONE
-2  tools/{define,registry}, gpt_image_2, magica-client (against MSW)        DONE
-3  trigger/magica-node-run  + the resume-not-resubmit test                  DONE
-4  trigger/{turn-state,run-agent-turn}  with fake deps → block order + segment tests   DONE
-5a tools/to-ai-sdk + trigger/{streams,tool-runtime}   the money path, proven on real PG   DONE
-5b trigger/agent-turn shell + prompts/system + turn.service + llm adapter   DONE (builds
-   on a live worker; the first real model call belongs with step 6's send route)
-6  services + POST send + GET chat + GET active-run + GET chats + GET credits   <-- NEXT
+0  trigger.config.ts + the run-metadata size spike
+1  lib/credits              + unit test asserting balance === SUM(ledger)
+2  tools/{define,registry}, gpt_image_2, magica-client (against MSW)
+3  trigger/magica-node-run  + the resume-not-resubmit test
+4  agent/{turn-state,run-agent-turn}    with fake deps → block order + segment tests
+5a tools/to-ai-sdk + agent/tool-runtime + trigger/streams    the money path, on real Postgres
+5b trigger/agent-turn shell + prompts/system + turn.service + agent/llm adapter
+6  services + POST send + GET chat + GET active-run + GET chats + GET credits
 7  frontend (see its LLD Phase 1)
 ```
 
-Steps 0-3 shipped with 41 passing tests and zero live spend. `trigger.config.ts` moved ahead of
-step 1 because the F5 spike needed a worker before anything depended on its answer. `lib/credits`
-gained `reconcileToolCharge` (decisions #51) and `tools/pricing.ts` gained `ensureCatalogPricing`,
-neither of which was in the original file list — both close simplifications §3.6 had flagged for
-later.
+`trigger.config.ts` comes before step 1 because the run-metadata spike needs a worker before
+anything depends on its answer. `lib/credits` also carries `reconcileToolCharge` and `tools/pricing.ts`
+carries `ensureCatalogPricing`; both close simplifications §3.6 would otherwise defer.
 
 **Files**
 ```
@@ -725,10 +721,10 @@ src/app/api/v1/chats/[id]/messages/route.ts      (POST — send)
 src/app/api/v1/chats/[id]/route.ts               (GET  — reload)
 src/app/api/v1/chats/[id]/active-run/route.ts    (GET  — recovery)
 src/app/api/v1/chats/route.ts                    (GET  — LIST ONLY, cursor, no search/filter.
-                                                  Moved from Phase 5 (review #21): FE Phase 3's
+                                                  Moved from Phase 5: FE Phase 3's
                                                   sidebar + Tasks page need it real, not mocked, and
-                                                  it is the most-seen surface for the 20% fidelity
-                                                  score. ~20 lines over an index that already exists)
+                                                  it is the most-seen surface in the product.
+                                                  ~20 lines over an index that already exists)
 trigger.config.ts
 tests/msw/magica.ts, tests/msw/openrouter.ts
 ```
@@ -778,8 +774,7 @@ async function entry(tx: Tx, { userId, type, amount, key, runId, invocationId }:
 ```
 
 > **Ledger row FIRST, then the balance — and `ON CONFLICT DO NOTHING`, never a caught exception.**
-> An earlier draft of this file updated the balance first and caught `P2002` from the insert. That was
-> wrong twice over, and both failures are exactly what the credits criterion looks for:
+> Updating the balance first and catching `P2002` from the insert is wrong twice over:
 > 1. **It double-charged on retry.** The decrement ran again, *then* the insert collided, and the
 >    catch returned success — so `balance` drifted from `SUM(ledger)` silently.
 > 2. **It poisoned the transaction.** In Postgres, an error inside a transaction aborts it; every
@@ -790,7 +785,7 @@ async function entry(tx: Tx, { userId, type, amount, key, runId, invocationId }:
 > Insert-first inverts both: the unique index decides whether this is the first application, the row
 > count tells us without raising, and the balance only moves when the ledger actually grew.
 
-Four properties to be able to defend cold:
+Four properties this relies on:
 1. **The ledger is the source of truth**, the balance is a cache. Writing the truth first means a
    crash between the two statements can only *understate* the cache — recomputable from `SUM(ledger)`,
    never a phantom charge.
@@ -811,7 +806,7 @@ export interface ToolCtx {
 export function defineTool<I extends z.ZodType, O extends z.ZodType>(t: {
   name: string;
   description: string;                            // the LLM reads this
-  display: { label: string; icon: string };       // the HUMAN reads this (gap 8)
+  display: { label: string; icon: string };       // the HUMAN reads this
   interaction?: "plan_approval" | "questions";    // no execute if set
   tags?: string[];                                // §8 tool subsetting
   input: I;
@@ -850,7 +845,7 @@ export async function runMagicaNode(a: {
 }
 ```
 
-Contract facts that must be encoded, not assumed (see `docs/api-notes/magica-api-reference.md`):
+Contract facts that must be encoded, not assumed:
 `202` not `200`; statuses `QUEUED|RUNNING|COMPLETED|FAILED|CANCELED` (one L); **403 = insufficient
 credits**; prefer `userMessage` over `error` for display; `creditUsed` is microcredits.
 
@@ -871,17 +866,19 @@ export async function executeMagicaNode(p: MagicaNodeRunPayload, sleep: Sleep) {
 
 export const magicaNodeRun = task({
   id: "magica-node-run",
-  retry: { maxAttempts: 1 },                       // manual retry only (decision #20)
+  retry: { maxAttempts: 1 },                       // manual retry only
   run: (p: MagicaNodeRunPayload) =>
     executeMagicaNode(p, (ms) => wait.for({ seconds: Math.ceil(ms / 1000) })),
 });
 ```
 
-**BUILT — three corrections found against the real SDK (session 6):**
+**Three corrections against the real SDK:**
 - **`retry: { maxAttempts: 1 }`, not top-level `maxAttempts`.** The latter is v3 syntax and does not
   compile against `@trigger.dev/sdk@4`.
-- **`sleep` must be injected as `wait.for`**, not left to a timer, or the machine holds a CPU for the
-  full two-minute poll window instead of suspending.
+- **`sleep` must be injected as `wait.for`**, not left to a timer — but that only suspends for waits
+  **over 5 seconds**. `DURATION_WAIT_CHARGE_THRESHOLD_MS` in the SDK is 5000, and a shorter wait
+  sleeps in process and is billed as compute. The poll interval is 6s for that reason; at 2s a
+  two-minute node run cost two minutes of compute doing nothing, against a $5/month allowance.
 - **`AgentRun.userMessageId` is required and unique**, so any fixture must create the user `Message`
   first. A run cannot exist without the message that caused it.
 
@@ -907,7 +904,7 @@ loop is testable without Trigger.dev.
 export async function runAgentTurn(deps: Deps, { runId }: { runId: string }) {
   // 1. BOOTSTRAP (idempotent — also the retry reset path)
   const { run, chat, history } = await deps.bootstrap(runId);
-  // `one_assistant_message_per_run` is a RAW partial index, so Prisma cannot `upsert` on it (F6):
+  // `one_assistant_message_per_run` is a RAW partial index, so Prisma cannot `upsert` on it:
   //   try { create assistant Message } catch (P2002) { findFirst({ runId, role:'assistant' }) }
   // That is precisely why the index is partial-unique: idempotent bootstrap with no lock.
 
@@ -934,7 +931,7 @@ export async function runAgentTurn(deps: Deps, { runId }: { runId: string }) {
     let textOpen = false;
     for await (const part of stream.fullStream) {
       switch (part.type) {
-        case "text-delta":                          // v7 carries `.text` (F4)
+        case "text-delta":                          // v7 carries `.text`
           await deps.agentText.append(part.text);
           textOpen = true; bufferText(part.text);
           break;
@@ -949,9 +946,9 @@ export async function runAgentTurn(deps: Deps, { runId }: { runId: string }) {
           reasoning = "";
           break;
         case "tool-call":
-          if (textOpen) { closeTextBlock(); segment++; textOpen = false; }   // gap 3
+          if (textOpen) { closeTextBlock(); segment++; textOpen = false; }
           blocks.push({ segment, type: "tool_use", id: part.toolCallId,
-                        name: part.toolName, input: part.input });   // v7: `.input`, not `.args` (F4)
+                        name: part.toolName, input: part.input });   // v7: `.input`, not `.args`
           await deps.persistBlocks(blocks);         // progressive persistence
           await deps.metadata.set({ phase: "working",
                                     currentStep: registry[part.toolName].display.label,
@@ -980,7 +977,7 @@ export async function runAgentTurn(deps: Deps, { runId }: { runId: string }) {
     // 4. WAITPOINT — task level, never inside a live stream
     // An interaction tool has NO `execute`, so v7 emits the call and ends the step; `stopWhen` halts
     // the loop. The resolution MUST go back as a tool-result message or the model repeats the call.
-    // suspendOn() MUST metadata.flush() BEFORE wait.forToken (dry-run F11): Trigger.dev BATCHES
+    // suspendOn() MUST metadata.flush() BEFORE wait.forToken: Trigger.dev BATCHES
     // metadata writes, so a bare set() may not have left the machine when the run suspends. A client
     // reloading during the wait would then see phase:'working' with no waitpoint and render NO
     // approval card, against a run that sits for 15 minutes with no way to resolve it. Invisible in
@@ -1001,7 +998,7 @@ The `deps` seam is what makes this testable: `bootstrap`, `startStream`, `append
 `finalizeFailed` are all injected. Unit tests pass fakes and assert block order, segment increments
 and which finalize ran **without Trigger.dev, without Postgres, without OpenRouter**.
 
-**BUILT (session 7), with three changes from the sketch above.**
+**Three refinements over the sketch above.**
 
 `startStream` is injected and yields a narrow `TurnStreamPart` union — the adapter that wraps
 `streamText` maps the SDK's parts onto it and drops the rest, so provider and SDK naming churn lives
@@ -1031,7 +1028,7 @@ a token count. `usage` now joins the current group and never consumes a break.
 **Stream offsets.** Only `text` blocks consume the agent-text stream, so only they carry `chars`.
 The earlier rule summed `chars` over "text and thinking" blocks — but reasoning travels as
 `RunMetadata.reasoningText` and is persisted as a `thinking` block, never appended to the stream
-(decision #50), so counting it would offset every following text block by the length of the thinking
+, so counting it would offset every following text block by the length of the thinking
 transcript and render garbled prose. Corrected in the contract and here.
 
 `projection()` is bounded to the newest 60 rows because `RunMetadata.blocks` caps at 60 and a
@@ -1055,7 +1052,7 @@ Every tool goes through the same wrapper. Tools stay pure; all persistence and m
 Step 4 before step 5 is the whole mid-turn-exhaustion story, and it means there is never a
 late-settle race.
 
-**BUILT (session 7). Four things the sketch did not say.**
+**Four things the sketch above does not say.**
 
 **Failures come back as data, not as exceptions.** `execute` returns
 `{ ok: true, data } | { ok: false, error, retryable }`. A blocked prompt is a normal path, so the
@@ -1078,7 +1075,7 @@ path, and a second way to do it is a second way to get it wrong.
 **`ctx.reportCost` is how the real price gets out of a tool.** `runMagicaNode` returns `creditUsed`
 and the tool was discarding it, so `reconcileToolCharge` had no production caller either. The tool
 now reports it and `completeInvocation` reconciles, in its own transaction, swallowing an
-uncollectable shortfall (#51).
+uncollectable shortfall.
 
 #### 4.1.6a `trigger/tool-runtime.ts` — the effects half of that seam
 
@@ -1095,10 +1092,10 @@ submission at all when the estimate cannot be charged**, no invocation on a canc
 charge and one submission across a replay, and an uncollectable shortfall that stops at zero without
 failing the completed step. `balance === SUM(ledger)` after every one.
 
-**The window this leaves, stated plainly (dry-run F12):** `chargeTool` commits in its own short
+**The window this leaves, stated plainly:** `chargeTool` commits in its own short
 transaction; `execute` is a network call outside any transaction. Crash in between and the charge
 stands with no work done. This is **recovered, not prevented** — the retry reset path cancels and
-refunds non-terminal invocations (decision #20), so it clears when the user retries. Worth knowing
+refunds non-terminal invocations, so it clears when the user retries. Worth knowing
 because it reads like a hole, and because the obvious "fix" (charge after execute) reintroduces the
 late-settle race the ordering exists to prevent. Charging first stays correct; the compensating
 action closes the window.
@@ -1125,7 +1122,7 @@ action closes the window.
 
 ---
 
-### Phase 2 — Reliability & the failure matrix · ~5h · the 20%
+### Phase 2 — Reliability & the failure matrix · ~5h
 
 **Goal:** every row of `ARCHITECTURE §5` demonstrably behaves as written, and every failed turn is
 explainable from the UI alone.
@@ -1136,7 +1133,7 @@ explainable from the UI alone.
 **Build**
 1. `assertTransition(from,to)` — one map. Illegal jumps throw, so a bug cannot resurrect a terminal run.
 2. **Cancel**, in this order: status flip → `runs.cancel` → message cancelled keeping partials →
-   **sweep pending waitpoints to `expired`** (gap 9e) → `refundAdmission`.
+   **sweep pending waitpoints to `expired`** → `refundAdmission`.
 3. **Retry** — only from `failed`/`cancelled`; `attempt+1`; resets the assistant row (clear blocks,
    cancel + refund non-terminal invocations).
 4. **Stale-lock recovery** — never infer liveness from timestamps. `triggerRunId IS NULL` and >90s
@@ -1151,7 +1148,7 @@ tool outcomes + Retry; cancel leaves no `pending` waitpoint; logs carry all six 
 
 ---
 
-### Phase 3 — Skills · ~3h · explicitly graded, explicitly tested
+### Phase 3 — Skills · ~3h · explicitly tested
 
 **Goal:** the PDF's skills system, with its five named tests.
 
@@ -1172,7 +1169,7 @@ tool outcomes + Retry; cancel leaves no `pending` waitpoint; logs carry all six 
 is refused; a repeat load dedups; an unknown skill returns a tool-error the model recovers from;
 a suspended run resumes with the same hashes.
 
-**Tests** — the five above, by name. These are in the PDF; a grader will look for them.
+**Tests** — the five above, by name. They are named in the PDF and must exist by those names.
 
 ---
 
@@ -1217,7 +1214,7 @@ produces a tool-error the model recovers from; chat list pages with no offset sc
 
 ### Phase 6 — Deferred-by-design · ~8h · take in this order, stop anywhere
 
-Ordered by *graded value per hour*. Every item is independent.
+Ordered by value per hour. Every item is independent.
 
 | Order | Item | Why here |
 |---|---|---|
@@ -1255,18 +1252,16 @@ the account bootstrap under three racing callers. `tests/integration/schema.test
 hand-written indexes still exist, because `migrate dev` has already reverted them once and a missing
 partial unique index is a correctness bug, not a slow query.
 
-**MSW handlers are GENERATED from the contracts, not hand-authored (dry-run F15).** Hand-written
+**MSW handlers are GENERATED from the contracts, not hand-authored.** Hand-written
 handlers drift from the Zod schemas, and at that point integration tests pass against a fiction.
 Build response bodies from the same schemas the routes parse. Magica fixtures seed from the archived
-live catalog (`docs/api-notes/magica-docs/required-tools-schemas.json`) rather than from memory — the
-catalog is on disk precisely so the mocks match the real API by construction.
+live catalog rather than from memory, so the mocks match the real API by construction.
 
 Related: AI SDK v7 streams tool input as `tool-input-start` / `tool-input-delta` (field
 `inputTextDelta`) / `tool-input-end`, **and** emits a final `tool-call` carrying the complete `input`.
 We handle only `tool-call`, so there is no partial-argument assembler to write.
 
-**OpenRouter budget (50/day, hard — confirmed on Slack, session 7; Magica's own LLM gateway is NOT
-permitted, so free-tier OpenRouter is the only path).** All automated tests = **0 requests**. Dev
+**OpenRouter budget (50/day, hard). Free-tier OpenRouter is the only permitted path to a model.** All automated tests = **0 requests**. Dev
 checks <=20/day. Acceptance ~10, once. Demo ~20 headroom, recorded right after the daily reset.
 
 **The caps bound a runaway, they do not ration normal use.** A one-tool turn costs two requests and a
@@ -1274,7 +1269,7 @@ two-tool turn three, whatever `MAX_TURNS` and `MAX_STEPS` are set to. What consu
 number of turns run, so the caps exist to stop a loop bug or a tool-calling model from spending it in
 one go. Defaults are **`MAX_TURNS` 3 x `MAX_STEPS` 4 = 12** worst case, and `lib/env.ts` now
 `superRefine`s the product against `OPENROUTER_DAILY_REQUESTS`: a pair that lets one turn spend more
-than half the day fails at boot, naming both variables and printing the arithmetic. Decision #49's
+than half the day fails at boot, naming both variables and printing the arithmetic. The
 "raise one, never both" is therefore enforced rather than remembered.
 
 **Step 5b owes the counterpart: make the spend observable.** Nothing today counts actual requests —
@@ -1284,13 +1279,13 @@ day.
 
 ---
 
-## 6. Ten decisions to be able to defend cold
+## 6. Ten decisions worth knowing
 
-A reviewer will pick from this list.
+The choices most likely to be questioned, and the reason each was made.
 
 1. **Charge before execute.** Catches exhaustion before external cost; no late-settle race.
 2. **Admission always refunded in full.** Net turn cost = Σ tool charges. The earlier
-   reserve/settle/refund-remainder model double-charged (decision #19a).
+   reserve/settle/refund-remainder model double-charged.
 3. **`magicaRunId` checkpointed before the first poll.** The one guard that stops paying twice after a crash.
 4. **Partial unique index for one-active-run.** The lock is a database constraint, not application code.
 5. **`idempotencyKey = {userMessageId}:{attempt}`.** Dedups dispatch without ever blocking a legitimate retry.
@@ -1298,7 +1293,7 @@ A reviewer will pick from this list.
    because regenerated tool ids never match. The PDF agrees: "retry only when safe."
 7. **Postgres is truth; realtime is a preview.** Test: could a fresh browser rebuild this screen now?
 8. **`segment` increments on text-block close.** Reproduces the reference's repeated step groups
-   (corrected in session 4 — the waitpoint-only rule collapsed a 10-step turn into one group).
+   A waitpoint-only rule would collapse a 10-step turn into a single group.
 9. **The server prices plan steps; the model never states a cost.** Otherwise the credit chips are
    model-invented numbers on the credits criterion.
 10. **Never infer liveness from timestamps.** A run suspended 14 minutes on a waitpoint looks stale
@@ -1314,7 +1309,7 @@ runtime there meant four extra bundle entry points for nothing, and the director
 you what was actually a task. `src/trigger/` is now task definitions only; the implementation they
 bind sits in `src/agent/`.
 
-### The pino transport that breaks the task build (session 7, cost an hour)
+### The pino transport that breaks the task build
 
 `pino({ transport: { target: "pino-pretty" } })` runs the transport in a **worker thread**, which the
 runtime resolves from `pino/lib/worker.js`. That path does not exist inside Trigger.dev's flattened
@@ -1335,7 +1330,7 @@ time, so anything that spawns a thread or a subprocess at module scope breaks th
 the run. `pnpm trigger:dev` is the only check that catches it, and it belongs in every phase's DoD
 from here.
 
-## 7. Traps that have already cost other people hours
+## 7. Traps in this stack
 
 | Trap | Symptom | Guard |
 |---|---|---|
@@ -1349,3 +1344,26 @@ from here.
 | 10 concurrent realtime connections (free tier) | dropped subscriptions | close on unmount; one browser tab for the demo |
 | Trigger.dev env vars set to only the obvious three | **every** task crashes at boot with a Zod error | tasks import `lib/db.ts` → `lib/env.ts`, which parses the **whole** schema at import. The dashboard needs every non-optional variable — including `DATABASE_URL_UNPOOLED` and `FRONTEND_URL`, which a task never uses |
 | `prisma generate` in `postinstall` reading config through Prisma's `env()` | `pnpm install` fails on a fresh clone with no `.env` | `prisma.config.ts` resolves the URL permissively; `lib/env.ts` is what fails by name, at app boot |
+
+---
+
+## 8. Open questions
+
+Decisions this document does not make. Each is scoped so it can be answered without reopening
+anything above it.
+
+**Model rotation on upstream rate-limiting.** Free-tier models are rate-limited by their upstream
+providers independently of our own request budget, and two of the three in `ALLOWED_MODELS` were
+unavailable when last exercised. Rotating to the next entry in the allowlist on a `429` is not a paid
+fallback and would materially improve reliability. Against it: it makes a turn's served model
+non-deterministic, which `Message.aiModel` records but a user does not choose. Unresolved.
+
+**Per-send model selection.** `SendMessage.modelId` is honoured when a chat is created and ignored
+afterwards, because the chat's stored `modelId` wins. The three options are to persist it to the chat
+on each send, to reject a mismatch, or to drop the field from the send contract and make the model a
+chat-level setting only. Silently ignoring it — the current behaviour — is the one option that is
+clearly wrong.
+
+**`attachmentIds` before uploads exist.** The send contract accepts up to five and the route ignores
+them until Phase 6. Rejecting them with `VALIDATION_ERROR` until the feature lands is more honest than
+accepting and discarding.

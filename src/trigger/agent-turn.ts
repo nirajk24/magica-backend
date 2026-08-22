@@ -1,6 +1,7 @@
 import { metadata, task, wait } from "@trigger.dev/sdk";
 import type { WaitpointResolution } from "@/contracts";
 import { db } from "@/lib/db";
+import { recordRateLimit } from "@/lib/llm-status";
 import { bindContext, logger } from "@/lib/logger";
 import { getTool } from "@/tools/registry";
 import { ensureCatalogPricing } from "@/tools/pricing";
@@ -61,6 +62,7 @@ export const agentTurn = task({
           onRequest: () => {
             requests++;
           },
+          onRateLimited: recordRateLimit,
           log: turnLog,
         }),
 

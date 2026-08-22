@@ -22,12 +22,13 @@ vi.mock("@clerk/nextjs/server", () => ({
 // `trigger()` would reach Trigger.dev.
 vi.mock("@/trigger/agent-turn", () => ({
   agentTurn: {
-    // `AgentRun.triggerRunId` is unique, so the id must be unique across the whole file, not just
-    // within a test — real Trigger.dev ids are.
+    // `AgentRun.triggerRunId` is unique, so the id must be unique across every run of this suite,
+    // not just within one — a run killed before its cleanup would otherwise leave a value behind
+    // that every later run collides with. Real Trigger.dev ids are globally unique too.
     trigger: (payload: { runId: string }) => {
       trigger.dispatched.push(payload.runId);
       trigger.issued++;
-      return Promise.resolve({ id: `run_trigger_${trigger.issued}` });
+      return Promise.resolve({ id: `run_${crypto.randomUUID()}` });
     },
   },
 }));
@@ -65,6 +66,7 @@ const creditsRoute = await import("@/app/api/v1/credits/route");
 const topUpRoute = await import("@/app/api/v1/credits/top-up/route");
 const cancelRoute = await import("@/app/api/v1/runs/[runId]/cancel/route");
 const retryRoute = await import("@/app/api/v1/messages/[messageId]/retry/route");
+const llmStatusRoute = await import("@/app/api/v1/llm/status/route");
 
 const created: string[] = [];
 
@@ -119,12 +121,11 @@ describe("POST /chats/:id/messages", () => {
     const body = await envelope<{ chatId: string; runId: string; triggerRunId: string }>(res);
 
     expect(res.status).toBe(200);
-    expect(body.data?.triggerRunId).toMatch(/^run_trigger_\d+$/);
     expect(trigger.dispatched).toEqual([body.data?.runId]);
 
     const run = await db.agentRun.findUniqueOrThrow({ where: { id: body.data!.runId } });
     expect(run.status).toBe("queued");
-    expect(run.triggerRunId, "written back after dispatch").toBe("run_trigger_1");
+    expect(run.triggerRunId, "written back after dispatch").toBe(body.data?.triggerRunId);
     expect(run.idempotencyKey).toBe(`${run.userMessageId}:1`);
 
     const chat = await db.chat.findUniqueOrThrow({ where: { id: body.data!.chatId } });
@@ -264,7 +265,7 @@ describe("GET /chats", () => {
 
 describe("GET /chats/:id/active-run", () => {
   it("returns the in-flight run with a realtime token", async () => {
-    const sent = await envelope<{ chatId: string; runId: string }>(
+    const sent = await envelope<{ chatId: string; runId: string; triggerRunId: string }>(
       await post("new", { content: "still working" }),
     );
     const chatId = sent.data!.chatId;
@@ -275,9 +276,9 @@ describe("GET /chats/:id/active-run", () => {
     );
     const body = await envelope<{ runId: string; triggerRunId: string; status: string }>(res);
 
-    expect(body.data).toMatchObject({
+    expect(body.data, "a reloading client must be pointed at the run send just dispatched").toMatchObject({
       runId: sent.data!.runId,
-      triggerRunId: expect.stringMatching(/^run_trigger_\d+$/) as unknown as string,
+      triggerRunId: sent.data!.triggerRunId,
       status: "queued",
     });
   });
@@ -323,6 +324,11 @@ describe("GET /credits", () => {
 });
 
 describe("POST /credits/top-up", () => {
+  let keySeed: string;
+  beforeEach(() => {
+    keySeed = crypto.randomUUID();
+  });
+
   const topUp = (amount: string, key?: string) =>
     topUpRoute.POST(
       new Request("http://localhost/api/v1/credits/top-up", {
@@ -334,7 +340,7 @@ describe("POST /credits/top-up", () => {
 
   it("adds credits and returns the new balance as a string", async () => {
     const userId = clerk.userId!;
-    const res = await topUp("1000000", "key-1");
+    const res = await topUp("1000000", `${keySeed}-a`);
     const body = await envelope<{ balance: string }>(res);
 
     expect(res.status).toBe(200);
@@ -344,8 +350,8 @@ describe("POST /credits/top-up", () => {
 
   it("grants once for a repeated idempotency key", async () => {
     const userId = clerk.userId!;
-    await topUp("1000000", "key-same");
-    await topUp("1000000", "key-same");
+    await topUp("1000000", `${keySeed}-same`);
+    await topUp("1000000", `${keySeed}-same`);
 
     expect(await getBalance(userId)).toBe(env.SIGNUP_GRANT_CREDITS + 1_000_000n);
     expect(await sumLedger(userId)).toBe(await getBalance(userId));
@@ -359,7 +365,7 @@ describe("POST /credits/top-up", () => {
 
   it("rejects an amount that is not a positive integer string", async () => {
     for (const amount of ["0", "-5", "1.5", "abc", ""]) {
-      const res = await topUp(amount, `key-${amount}`);
+      const res = await topUp(amount, `${keySeed}-${amount}`);
       expect(res.status, `amount ${JSON.stringify(amount)}`).toBe(400);
     }
   });
@@ -613,5 +619,30 @@ describe("stale-lock recovery on send", () => {
 
     const held = await db.agentRun.findUniqueOrThrow({ where: { id: sent.data!.runId } });
     expect(held.status).toBe("running");
+  });
+});
+
+describe("GET /llm/status", () => {
+  const status = () => llmStatusRoute.GET(new Request("http://localhost/api/v1/llm/status"));
+
+  it("reports a live cooldown so the composer can say when to come back", async () => {
+    const { recordRateLimit } = await import("@/lib/llm-status");
+    await recordRateLimit({ modelId: "z-ai/glm-5.2:free", retryAfterSeconds: 120 });
+
+    const body = await envelope<{ lastRoutedModel: string; rateLimitedUntil: string }>(
+      await status(),
+    );
+
+    expect(body.data?.lastRoutedModel).toBe("z-ai/glm-5.2:free");
+    expect(Date.parse(body.data!.rateLimitedUntil)).toBeGreaterThan(Date.now());
+
+    await db.llmStatus.deleteMany({});
+  });
+
+  it("reports clear when nothing is limited", async () => {
+    await db.llmStatus.deleteMany({});
+
+    const body = await envelope<{ rateLimitedUntil: string | null }>(await status());
+    expect(body.data?.rateLimitedUntil).toBeNull();
   });
 });

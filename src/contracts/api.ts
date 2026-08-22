@@ -147,6 +147,15 @@ export const CreditsPage = z.object({
   nextCursor: z.string().nullable(),
 });
 
+/**
+ * State of the shared LLM path. `rateLimitedUntil` is null once the cooldown has elapsed, so a
+ * client renders it without comparing clocks.
+ */
+export const LlmStatus = z.object({
+  lastRoutedModel: z.string().nullable(),
+  rateLimitedUntil: z.string().nullable(),
+});
+
 /** Microcredits as a decimal string, like every other credit value on the wire. */
 export const TopUp = z.object({ amount: z.string().regex(/^[1-9]\d*$/) });
 
@@ -163,6 +172,7 @@ export type MessagesQuery = z.infer<typeof MessagesQuery>;
 export type ActiveRun = z.infer<typeof ActiveRun>;
 export type WaitpointResolution = z.infer<typeof WaitpointResolution>;
 export type CreditsPage = z.infer<typeof CreditsPage>;
+export type LlmStatus = z.infer<typeof LlmStatus>;
 export type TopUp = z.infer<typeof TopUp>;
 export type TopUpResult = z.infer<typeof TopUpResult>;
 export type ModelId = z.infer<typeof ModelId>;

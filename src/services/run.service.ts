@@ -4,7 +4,7 @@ import type { SendMessageResult, WaitpointResolution } from "@/contracts";
 import { refundAdmission, refundToolCharge, reserveAdmission } from "@/lib/credits";
 import { db, type Tx } from "@/lib/db";
 import { AppError, isUniqueViolation } from "@/lib/errors";
-import type { Logger } from "@/lib/logger";
+import { bindContext, type Logger } from "@/lib/logger";
 import { agentTurn } from "@/trigger/agent-turn";
 
 type RunStatus = "queued" | "running" | "waiting" | "completed" | "failed" | "cancelled";
@@ -238,13 +238,15 @@ export async function cancelRun(a: {
 }): Promise<void> {
   const run = await db.agentRun.findFirst({
     where: { id: a.runId, userId: a.userId, chat: { deletedAt: null } },
-    select: { id: true, status: true, triggerRunId: true },
+    select: { id: true, chatId: true, status: true, triggerRunId: true },
   });
 
   if (!run) throw new AppError("NOT_FOUND", "That run does not exist.");
 
+  const log = bindContext(a.log, { chatId: run.chatId });
+
   if (!WRITABLE.includes(run.status as (typeof WRITABLE)[number])) {
-    a.log.info({ status: run.status }, "cancel ignored, the run had already finished");
+    log.info({ status: run.status }, "cancel ignored, the run had already finished");
     return;
   }
 
@@ -259,12 +261,12 @@ export async function cancelRun(a: {
   });
 
   if (!terminated) {
-    a.log.info("cancel lost to a turn that finished first");
+    log.info("cancel lost to a turn that finished first");
     return;
   }
 
   await detachRemoteRun(
-    { triggerRunId: run.triggerRunId, waitpointIds, log: a.log },
+    { triggerRunId: run.triggerRunId, waitpointIds, log },
     a.control ?? triggerRunControl,
   );
 }
@@ -349,6 +351,7 @@ export async function retryTurn(a: {
 
   assertTransition(run.status as RunStatus, "queued");
 
+  const log = bindContext(a.log, { chatId: message.chatId, runId: run.id });
   const attempt = run.attempt + 1;
   const idempotencyKey = `${run.userMessageId}:${attempt}`;
 
@@ -394,7 +397,7 @@ export async function retryTurn(a: {
     throw error;
   }
 
-  a.log.info({ runId: run.id, attempt }, "retrying a turn");
+  log.info({ attempt }, "retrying a turn");
 
   return (a.dispatch ?? dispatchTurn)({
     runId: run.id,
@@ -402,7 +405,7 @@ export async function retryTurn(a: {
     userMessageId: run.userMessageId,
     assistantMessageId: message.id,
     idempotencyKey,
-    log: a.log,
+    log,
   });
 }
 

@@ -346,7 +346,7 @@ export const ALLOWED_MODELS = [
 | 14 | `/api/v1/attachments` | GET | **6** | `?cursor&source&chatId` | `{ attachments, nextCursor }` |
 | 15 | `/api/v1/attachments/:id` | PATCH/DELETE | **6** | `{ name }` / — | `{ attachment }` / `{ ok }` |
 | 16 | `/api/v1/messages/:id/feedback` | PATCH | **6** | `{ type }` | `{ ok: true }` |
-| 17 | `/api/v1/llm/status` | GET | **6** | — | `{ lastRoutedModel, rateLimitedUntil }` |
+| 17 | `/api/v1/llm/status` | GET | **2** | — | `LlmStatus` |
 
 ```ts
 // ─── 1. SEND — the most important contract in the system ───────────────────────
@@ -1140,9 +1140,22 @@ explainable from the UI alone.
    → dead, refund, admit. Otherwise `runs.retrieve()` and trust Trigger.dev.
 5. Rate limit on send (Postgres UPSERT counter) → `429` + `Retry-After`.
 6. `prisma/seed.ts` — makes `migrate reset` cost 10 seconds instead of your demo data.
+7. `POST /credits/top-up`, keyed on an `Idempotency-Key` header, so a turn stopped by exhausted
+   credits has a way forward and the ledger is exercised upwards as well as down.
+8. `lib/llm-status.ts` + `GET /llm/status` — `ARCHITECTURE §5` row 1 promises
+   `LlmStatus.rateLimitedUntil` on an OpenRouter 429. The cooldown comes from the provider's
+   `Retry-After` where it sends one. Recorded through a callback injected into `createStreamStarter`,
+   alongside `onRequest`: the classifier `describeStreamError` stays a pure function, and the write is
+   telemetry that must never fail a turn.
 
 **DoD** — every §5 row reproducible on demand; a failed turn shows error text + partial output +
 tool outcomes + Retry; cancel leaves no `pending` waitpoint; logs carry all six keys.
+
+Two §5 rows cannot be met in this phase and are not defects: waitpoint-unanswered needs Phase 4, and
+attachment limits need the uploads of Phase 6.
+
+`chatId` is bound inside the service rather than at the route for cancel and retry, because the route
+is addressed by run id and message id respectively and only learns the chat once the row is loaded.
 
 **Tests** — integration per §5 row; the acceptance list's 401/429/timeout/failed-run/duplicate-dispatch.
 
@@ -1349,6 +1362,8 @@ from here.
 | `undefined` in a Prisma update for a `Json?` column | means "leave unchanged", so a reset keeps the previous attempt's output | `Prisma.DbNull` writes SQL NULL; `Prisma.JsonNull` writes the JSON literal `null`, which readers then have to special-case |
 | Judging a suspended run by its age | a healthy run parked on a waitpoint is declared dead, refunded, and a second turn admitted beside it | never infer liveness from a timestamp. Age is only consulted when `triggerRunId IS NULL` — there is nothing to ask about. Otherwise ask Trigger.dev, and treat the call *failing* as "still alive" |
 | `pnpm check:wiring` reporting a same-file export as test-only | reads as a wiring bug when the function has real callers in its own module | the checker counts cross-file references. Confirm by grep before acting on it |
+| A ledger key built from a **client-supplied** idempotency key alone | two users choosing the same `Idempotency-Key` collide; the second silently gets nothing and a stale balance | scope it by user: `top_up:{userId}:{clientKey}` |
+| A test asserting a literal id that lands in a `@unique` column | passes once, then poisons every later run — a suite killed before `afterAll` leaves the value behind | mint globally unique ids in the mock (`randomUUID`), and assert against the value the response returned, not a literal |
 
 ---
 

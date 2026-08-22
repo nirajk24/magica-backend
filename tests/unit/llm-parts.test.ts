@@ -72,14 +72,38 @@ describe("mapping the SDK's stream onto ours", () => {
 
 describe("classifying a provider failure", () => {
   /** Detected structurally: the provider bundles its own copy of the error class. */
-  const apiError = (fields: { statusCode?: number; isRetryable?: boolean }) =>
-    Object.assign(new Error("Provider returned error"), fields);
+  const apiError = (fields: {
+    statusCode?: number;
+    isRetryable?: boolean;
+    responseHeaders?: Record<string, string>;
+  }) => Object.assign(new Error("Provider returned error"), fields);
 
   it("says the model is busy for a rate limit, not that it crashed", () => {
     const mapped = describeStreamError(apiError({ statusCode: 429, isRetryable: true }));
 
     expect(mapped.code).toBe("RATE_LIMITED");
     expect(mapped.message).toBe("The model is busy right now. Try again in a moment.");
+  });
+
+  it("carries the provider's Retry-After, so a client can say when to come back", () => {
+    const mapped = describeStreamError(
+      apiError({ statusCode: 429, responseHeaders: { "retry-after": "45" } }),
+    );
+
+    expect(mapped.code).toBe("RATE_LIMITED");
+    expect(mapped.retryAfterSeconds).toBe(45);
+  });
+
+  it("ignores a Retry-After that is not a plain number of seconds", () => {
+    // The header may legally hold an HTTP date, which is not what a cooldown in seconds expects.
+    for (const header of ["Wed, 21 Oct 2026 07:28:00 GMT", "", "soon"]) {
+      const mapped = describeStreamError(
+        apiError({ statusCode: 429, responseHeaders: { "retry-after": header } }),
+      );
+
+      expect(mapped.code, header).toBe("RATE_LIMITED");
+      expect(mapped.retryAfterSeconds, header).toBeUndefined();
+    }
   });
 
   it("separates a rejected request from an unavailable one", () => {

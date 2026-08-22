@@ -17,10 +17,20 @@ import type { AgentTurnDeps, TurnStream, TurnStreamPart } from "@/agent/run-agen
  * `@ai-sdk/provider-utils`, so the error class it throws is not the one this package compares against.
  */
 export function describeStreamError(error: unknown): AppError {
-  const api = error as { statusCode?: number; isRetryable?: boolean } | null;
+  const api = error as
+    | { statusCode?: number; isRetryable?: boolean; responseHeaders?: Record<string, string> }
+    | null;
 
   if (api?.statusCode === 429) {
-    return new AppError("RATE_LIMITED", "The model is busy right now. Try again in a moment.");
+    const header = api.responseHeaders?.["retry-after"];
+    const retryAfter = header && /^\d+$/.test(header) ? Number(header) : undefined;
+
+    return new AppError(
+      "RATE_LIMITED",
+      "The model is busy right now. Try again in a moment.",
+      undefined,
+      retryAfter,
+    );
   }
   if (api?.statusCode === 401 || api?.statusCode === 403) {
     return new AppError("FORBIDDEN", "The model provider rejected this request.");
@@ -60,10 +70,17 @@ export function toTurnStreamPart(part: TextStreamPart<ToolSet>): TurnStreamPart 
 
 async function* mapParts(
   stream: AsyncIterable<TextStreamPart<ToolSet>>,
+  onRateLimited: (error: AppError) => void,
 ): AsyncIterable<TurnStreamPart> {
   for await (const part of stream) {
     const mapped = toTurnStreamPart(part);
-    if (mapped !== null) yield mapped;
+    if (mapped === null) continue;
+
+    // `instanceof` is safe here, unlike for provider errors: this one was constructed by
+    // `describeStreamError` in this module.
+    if (mapped.type === "error" && mapped.error instanceof AppError) onRateLimited(mapped.error);
+
+    yield mapped;
   }
 }
 
@@ -85,6 +102,7 @@ export function createStreamStarter(a: {
   turn: TurnContext;
   runtime: ToolRuntime;
   onRequest: () => void;
+  onRateLimited: (a: { modelId: string; retryAfterSeconds?: number }) => Promise<void>;
   log: Logger;
 }): AgentTurnDeps["startStream"] {
   const openrouter = createOpenRouter({ apiKey: env.OPENROUTER_API_KEY });
@@ -92,6 +110,16 @@ export function createStreamStarter(a: {
   const stopWhen = [stepCountIs(env.MAX_STEPS), ...interactionStops()];
 
   return ({ modelId, history, blocks, resolutions }): TurnStream => {
+    // Status is telemetry, so a write that fails must not take down a turn that is otherwise fine.
+    // Both arrival paths call this and the write is an idempotent upsert, so firing twice is safe.
+    const noteRateLimit = (described: AppError) => {
+      if (described.code !== "RATE_LIMITED") return;
+
+      void a
+        .onRateLimited({ modelId, retryAfterSeconds: described.retryAfterSeconds })
+        .catch((error: unknown) => a.log.warn({ err: error }, "could not record the rate limit"));
+    };
+
     const messages = toModelMessages({
       // Opaque to the loop by design: it carries these between `bootstrap`, `recordResolution` and
       // here without inspecting them, so this is the one place their shape is known.
@@ -108,11 +136,14 @@ export function createStreamStarter(a: {
       tools,
       stopWhen,
       onStepFinish: () => a.onRequest(),
-      onError: ({ error }) => a.log.error({ err: error }, "stream error"),
+      onError: ({ error }) => {
+        a.log.error({ err: error }, "stream error");
+        noteRateLimit(describeStreamError(error));
+      },
     });
 
     return {
-      parts: mapParts(result.fullStream),
+      parts: mapParts(result.fullStream, noteRateLimit),
       usage: result.totalUsage,
     };
   };

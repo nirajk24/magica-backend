@@ -240,12 +240,19 @@ export async function hasSignupGrant(userId: string): Promise<boolean> {
   return granted !== null;
 }
 
+/**
+ * Adds credits, idempotent on the caller's own key.
+ *
+ * INVARIANT: the ledger key is scoped by user. `key` comes from a client's `Idempotency-Key` header,
+ * so two users are free to choose the same value — an unscoped key would let the second one's top-up
+ * silently no-op and hand back a balance that never moved.
+ */
 export function topUp(tx: Tx, a: { userId: string; amount: bigint; key: string }) {
   return entry(tx, {
     userId: a.userId,
     type: "top_up",
     amount: a.amount,
-    key: `top_up:${a.key}`,
+    key: `top_up:${a.userId}:${a.key}`,
   });
 }
 

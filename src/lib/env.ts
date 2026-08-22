@@ -25,6 +25,7 @@ const Env = z.object({
 
   ADMISSION_CREDITS: z.coerce.bigint().default(500_000n),
   SIGNUP_GRANT_CREDITS: z.coerce.bigint().default(30_000_000n),
+  MAX_TURNS: z.coerce.number().int().min(1).max(8).default(4),
   MAX_STEPS: z.coerce.number().int().min(1).max(24).default(6),
   SEND_RATE_PER_MINUTE: z.coerce.number().int().default(10),
 

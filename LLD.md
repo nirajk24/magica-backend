@@ -168,6 +168,9 @@ export const ContentBlock = z.discriminatedUnion("type", [
                                                     summary: z.string().optional() }),
   z.object({ ...base, type: z.literal("citations"), items: z.array(
                 z.object({ title: z.string(), url: z.string().url() })) }),
+  // Numbers are REQUIRED here on purpose: v7 reports usage as `number | undefined`, and the
+  // orchestrator emits this block only when both counts are present. Absence is modelled by the
+  // block not existing, never by a zero.
   z.object({ ...base, type: z.literal("usage"),     inputTokens: z.number(),
                                                     outputTokens: z.number() }),
   // Phase 6 — step-by-step mode
@@ -458,8 +461,8 @@ const Env = z.object({
   MAGICA_BASE_URL: z.string().url().default("https://inference.magica.com"),
   FRONTEND_URL: z.string().url(),
   ADMISSION_CREDITS: z.coerce.bigint().default(500_000n),
-  MAX_TURNS: z.coerce.number().default(12),   // our outer loop: streamText calls per turn
-  MAX_STEPS: z.coerce.number().default(8),    // SDK inner loop: tool rounds inside ONE streamText
+  MAX_TURNS: z.coerce.number().int().min(1).max(8).default(4),
+  MAX_STEPS: z.coerce.number().int().min(1).max(24).default(6),
   DEMO_MODE: bool.default("false"),
   DISABLE_TITLE_GEN: bool.default("false"),
 });
@@ -468,6 +471,20 @@ export const env = Env.parse(process.env);   // module load = boot check
 ```
 
 A missing key becomes a named crash on startup, not `undefined` in the middle of a demo.
+
+**`MAX_TURNS` × `MAX_STEPS` is the LLM request budget, and the product is what spends it.** They are
+two different loops: `MAX_TURNS` bounds our outer `while` (one `streamText` call each), `MAX_STEPS`
+bounds the SDK's inner tool-round loop inside a single call. Every inner step is one OpenRouter
+request against a **50/day** ceiling, so a worst-case turn costs `MAX_TURNS × MAX_STEPS`.
+
+Decision #45b set "6, and 12 for the demo" when there was only one loop; that reasoning was always
+about total requests, so it now applies to the product. At 4 × 6 the worst case is **24 requests —
+half the daily budget in one turn**, which is the real bound and worth stating rather than hiding.
+`MAX_TURNS` is only re-entered by an empty-stream retry (capped at 1) and a waitpoint resumption, so
+4 is already generous for a two-waitpoint turn.
+
+**For the demo, raise ONE of them, never both.** 4 × 12 = 48 is the entire daily allowance in a
+single turn.
 
 **`prisma/schema.prisma` datasource (dry-run F7)** — `prisma migrate` takes a Postgres advisory lock
 that does not survive pgBouncer, so migrations must run on the direct URL:
@@ -849,7 +866,15 @@ export async function runAgentTurn(deps: Deps, { runId }: { runId: string }) {
 
   while (turns++ < env.MAX_TURNS) {
     const stream = streamText({
-      model: openrouter(run.modelId),
+      // `.chat(id)`, never `openrouter(id)` or `.languageModel(id)`: the first declared overload
+      // returns OpenRouterCompletionLanguageModel, so TS infers the wrong class even though the
+      // runtime hands back a chat model.
+      //
+      // Reasoning MUST be requested here. v7 has a top-level `reasoning` call option, but this
+      // provider's getArgs() never destructures it — pass it to streamText and you get no thinking
+      // tokens and NO error. Model-level is typed; `providerOptions.openrouter` would also work and
+      // wins over this if both are set.
+      model: openrouter.chat(run.modelId, { reasoning: { enabled: true, effort: "medium" } }),
       messages: toModelMessages(history, blocks),
       tools: toAiSdkTools(registry, ctx),
       stopWhen: [stepCountIs(env.MAX_STEPS), hasToolCall("submit_plan"),
@@ -887,11 +912,22 @@ export async function runAgentTurn(deps: Deps, { runId }: { runId: string }) {
       }
     }
 
-    // 2. EMPTY-STREAM GUARD — one cheap in-process retry, then fail safely
+    // 2. USAGE — v7 types every field as `number | undefined`, so normalize HERE, once.
+    // All-or-nothing: both counts present → record them; otherwise leave tokenUsage null and append
+    // no usage block. `?? 0` would satisfy the schema by rendering "0 tokens" in the assistant
+    // footer, which is a wrong number rather than a missing one. The contracts already model absence
+    // (`MessageDTO.tokenUsage` is nullable, `RunMetadata.tokenUsage` optional, and the `usage` block
+    // is simply not emitted), so nothing downstream needs a sentinel.
+    const u = await stream.usage;
+    const usage = u.inputTokens !== undefined && u.outputTokens !== undefined
+      ? { inputTokens: u.inputTokens, outputTokens: u.outputTokens }
+      : null;
+
+    // 3. EMPTY-STREAM GUARD — one cheap in-process retry, then fail safely
     if (!producedText && !producedToolCalls) { if (!retried) { retried = true; continue; }
                                                return deps.finalizeFailed("empty response"); }
 
-    // 3. WAITPOINT — task level, never inside a live stream
+    // 4. WAITPOINT — task level, never inside a live stream
     // An interaction tool has NO `execute`, so v7 emits the call and ends the step; `stopWhen` halts
     // the loop. The resolution MUST go back as a tool-result message or the model repeats the call.
     // suspendOn() MUST metadata.flush() BEFORE wait.forToken (dry-run F11): Trigger.dev BATCHES

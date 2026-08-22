@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { REASONING_TAIL_CHARS } from "@/contracts";
-import { createTurnState } from "@/trigger/turn-state";
+import { createTurnState } from "@/agent/turn-state";
 
 const types = (state: ReturnType<typeof createTurnState>) =>
   state.blocks().map((b) => `${b.segment}:${b.type}`);

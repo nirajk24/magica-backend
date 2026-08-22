@@ -1,9 +1,9 @@
-import type { RunMetadata, WaitpointResolution } from "@/contracts";
+import type { ContentBlock, RunMetadata, WaitpointResolution } from "@/contracts";
 import { env } from "@/lib/env";
 import { AppError, ToolError } from "@/lib/errors";
 import type { Logger } from "@/lib/logger";
 import { getTool } from "@/tools/registry";
-import { createTurnState } from "@/trigger/turn-state";
+import { createTurnState } from "@/agent/turn-state";
 
 /**
  * The stream parts the loop acts on. The AI SDK emits many more; the adapter that wraps
@@ -21,7 +21,8 @@ export type TurnUsage = { inputTokens?: number; outputTokens?: number };
 
 export type TurnStream = {
   parts: AsyncIterable<TurnStreamPart>;
-  usage: Promise<TurnUsage>;
+  /** `PromiseLike` because that is what the SDK hands back; the loop only ever awaits it. */
+  usage: PromiseLike<TurnUsage>;
 };
 
 export type PendingInteraction = {
@@ -39,22 +40,24 @@ export type AgentTurnDeps = {
   startStream: (a: {
     modelId: string;
     history: unknown[];
-    blocks: unknown[];
+    blocks: ContentBlock[];
+    resolutions: unknown[];
   }) => TurnStream | Promise<TurnStream>;
   appendText: (delta: string) => Promise<void>;
   setMetadata: (patch: Partial<RunMetadata>) => Promise<void>;
   flushMetadata: () => Promise<void>;
-  persistBlocks: (a: { blocks: unknown[]; reasoningText?: string }) => Promise<void>;
+  persistBlocks: (a: { blocks: ContentBlock[]; reasoningText?: string }) => Promise<void>;
   suspendOn: (interaction: PendingInteraction) => Promise<WaitpointResolution>;
+  /** Returns the record to replay to the model as that tool's result on the next request. */
   recordResolution: (a: {
     interaction: PendingInteraction;
     resolution: WaitpointResolution;
-  }) => Promise<void>;
+  }) => Promise<unknown>;
   finalize: (a: {
-    blocks: unknown[];
+    blocks: ContentBlock[];
     tokenUsage: { inputTokens: number; outputTokens: number } | null;
   }) => Promise<void>;
-  finalizeFailed: (a: { reason: string }) => Promise<void>;
+  finalizeFailed: (a: { reason: string; blocks: ContentBlock[] }) => Promise<void>;
   now: () => number;
   log: Logger;
 };
@@ -118,6 +121,7 @@ export async function runAgentTurn(
 
     let retriedEmptyStream = false;
     let completed = false;
+    const resolutions: unknown[] = [];
 
     while (turns < env.MAX_TURNS) {
       turns++;
@@ -126,6 +130,7 @@ export async function runAgentTurn(
         modelId,
         history,
         blocks: state.blocks(),
+        resolutions,
       });
 
       let pending: PendingInteraction | null = null;
@@ -201,7 +206,10 @@ export async function runAgentTurn(
           continue;
         }
 
-        await deps.finalizeFailed({ reason: "The model returned an empty response." });
+        await deps.finalizeFailed({
+          reason: "The model returned an empty response.",
+          blocks: state.blocks(),
+        });
         return { status: "failed", turns, segments: state.segments(), reason: "empty response" };
       }
 
@@ -217,7 +225,7 @@ export async function runAgentTurn(
 
         const resolution = await deps.suspendOn(pending);
 
-        await deps.recordResolution({ interaction: pending, resolution });
+        resolutions.push(await deps.recordResolution({ interaction: pending, resolution }));
         state.breakSegment();
         await deps.flushMetadata();
         continue;
@@ -240,14 +248,18 @@ export async function runAgentTurn(
     }
 
     if (!completed) {
-      await deps.finalizeFailed({ reason: "This turn reached its step limit before finishing." });
+      await deps.finalizeFailed({
+        reason: "This turn reached its step limit before finishing.",
+        blocks: state.blocks(),
+      });
       return { status: "failed", turns, segments: state.segments(), reason: "turn limit reached" };
     }
 
     return { status: "completed", turns, segments: state.segments() };
   } catch (error) {
     deps.log.error({ err: error, runId, turns }, "agent turn failed");
-    await deps.finalizeFailed({ reason: safeReason(error) });
+    state.closeText();
+    await deps.finalizeFailed({ reason: safeReason(error), blocks: state.blocks() });
 
     return { status: "failed", turns, segments: state.segments(), reason: safeReason(error) };
   }

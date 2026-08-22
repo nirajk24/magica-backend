@@ -7,7 +7,7 @@ import { logger } from "@/lib/logger";
 import { gptImage2 } from "@/tools/gpt-image-2";
 import { toAiSdkTools, type ToolOutcome } from "@/tools/to-ai-sdk";
 import { executeMagicaNode } from "@/trigger/magica-node-run";
-import { createToolRuntime } from "@/trigger/tool-runtime";
+import { createToolRuntime } from "@/agent/tool-runtime";
 import { magicaHandlers, resetMagica, submissions } from "../msw/magica";
 import { server } from "../msw/setup";
 

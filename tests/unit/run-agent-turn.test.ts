@@ -7,7 +7,7 @@ import {
   type AgentTurnDeps,
   type TurnStreamPart,
   type TurnUsage,
-} from "@/trigger/run-agent-turn";
+} from "@/agent/run-agent-turn";
 
 type Recorder = {
   deps: AgentTurnDeps;
@@ -17,7 +17,7 @@ type Recorder = {
   streamed: string[];
   persisted: ContentBlock[][];
   finalized: { blocks: ContentBlock[]; tokenUsage: unknown } | null;
-  failed: { reason: string } | null;
+  failed: { reason: string; blocks: ContentBlock[] } | null;
   turnsStarted: number;
 };
 
@@ -99,9 +99,9 @@ function harness(a: {
       );
     },
 
-    recordResolution: () => {
+    recordResolution: ({ interaction, resolution }) => {
       rec.calls.push("recordResolution");
-      return Promise.resolve();
+      return Promise.resolve({ toolUseId: interaction.toolUseId, output: resolution });
     },
 
     finalize: ({ blocks, tokenUsage }) => {
@@ -110,9 +110,9 @@ function harness(a: {
       return Promise.resolve();
     },
 
-    finalizeFailed: ({ reason }) => {
+    finalizeFailed: ({ reason, blocks }) => {
       rec.calls.push("finalizeFailed");
-      rec.failed = { reason };
+      rec.failed = { reason, blocks: blocks as ContentBlock[] };
       return Promise.resolve();
     },
 
@@ -341,6 +341,26 @@ describe("failure paths", () => {
     expect(result.status).toBe("failed");
     expect(rec.failed?.reason).toBe("The model stopped responding partway through.");
     expect(rec.failed?.reason, "provider text must not reach a user").not.toContain("exploded");
+  });
+
+  it("keeps the partial output a failed turn already showed the user", async () => {
+    const rec = harness({
+      turns: [
+        [
+          text("I'll draw it. "),
+          toolCall("gpt_image_2"),
+          { type: "error", error: new Error("provider died") },
+        ],
+      ],
+    });
+
+    await runAgentTurn(rec.deps, { runId: "run_1" });
+
+    const kinds = rec.failed?.blocks.map((b) => b.type);
+    expect(kinds, "a failed turn that renders empty loses everything the user watched").toEqual([
+      "text",
+      "tool_use",
+    ]);
   });
 
   it("never lets an error escape, because Trigger.dev reports it with no message", async () => {

@@ -45,11 +45,15 @@ export const Health = z.object({
   dbLatencyMs: z.number(),
 });
 
-/** Only free-tier OpenRouter models with verified tool-calling support. */
+/**
+ * Free-tier OpenRouter models with verified tool-calling support. The first is the default, and it
+ * is the one observed actually answering — the other two were rate-limited upstream by their own
+ * providers on every attempt.
+ */
 export const ALLOWED_MODELS = [
+  "nvidia/nemotron-3-super-120b-a12b:free",
   "google/gemma-4-31b-it:free",
   "z-ai/glm-5.2:free",
-  "nvidia/nemotron-3-super-120b-a12b:free",
 ] as const;
 export const ModelId = z.enum(ALLOWED_MODELS);
 export const DEFAULT_MODEL_ID = ALLOWED_MODELS[0];

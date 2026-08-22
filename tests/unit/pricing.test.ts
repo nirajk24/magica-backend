@@ -97,4 +97,19 @@ describe("registry", () => {
     expect(input.quality).toBe(env.DEMO_MODE ? "High" : "Low");
     expect(gptImage2.credits(input)).toBe(env.DEMO_MODE ? 210_720n : 5_880n);
   });
+
+  it("CLAMPS a quality the model asked for, because a default alone is not a budget", () => {
+    const input = gptImage2.input.parse({ prompt: "a mountain", quality: "Medium" });
+
+    expect(input.quality, "observed live: the model asks for Medium, which costs 9x Low").toBe(
+      env.DEMO_MODE ? "Medium" : "Low",
+    );
+    expect(gptImage2.credits(input)).toBe(env.DEMO_MODE ? 52_680n : 5_880n);
+  });
+
+  it("clamps High too, so nothing can reach the 36x tier outside demo mode", () => {
+    const input = gptImage2.input.parse({ prompt: "a mountain", quality: "High" });
+
+    expect(gptImage2.credits(input)).toBe(env.DEMO_MODE ? 210_720n : 5_880n);
+  });
 });

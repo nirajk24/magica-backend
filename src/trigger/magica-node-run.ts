@@ -8,6 +8,7 @@ export type MagicaNodeRunPayload = {
   nodeType: string;
   subModelId?: string;
   input: unknown;
+  timeoutMs?: number;
 };
 
 export type MagicaNodeRunResult = {
@@ -42,7 +43,7 @@ export async function executeMagicaNode(
 
   if (invocation.magicaRunId) {
     log.info({ magicaRunId: invocation.magicaRunId }, "resuming an already-submitted magica run");
-    const resumed = await pollUntilTerminal(invocation.magicaRunId, sleep);
+    const resumed = await pollUntilTerminal(invocation.magicaRunId, sleep, payload.timeoutMs);
     return { output: resumed.output, creditUsed: resumed.creditUsed.toString(), resumed: true };
   }
 
@@ -51,6 +52,7 @@ export async function executeMagicaNode(
     subModelId: payload.subModelId,
     input: payload.input,
     sleep,
+    timeoutMs: payload.timeoutMs,
     onRunId: async (magicaRunId) => {
       await db.toolInvocation.update({
         where: { id: payload.invocationId },

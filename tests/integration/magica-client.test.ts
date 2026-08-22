@@ -120,11 +120,28 @@ describe("magica client", () => {
     expect(submissions).toHaveLength(1);
   });
 
-  it("gives up after the poll cap rather than looping forever", async () => {
+  it("gives up after the default poll budget rather than looping forever", async () => {
     server.use(...magicaHandlers({ polls: [{ status: "RUNNING" }] }));
 
     await expect(pollUntilTerminal("run_stuck", noSleep)).rejects.toThrow(/did not finish in time/);
     expect(polled.filter((p) => p === "run_stuck")).toHaveLength(60);
+  });
+
+  it("honours a shorter budget, so a slow node type is not held to the image default", async () => {
+    server.use(...magicaHandlers({ polls: [{ status: "RUNNING" }] }));
+
+    await expect(pollUntilTerminal("run_brief", noSleep, 6_000)).rejects.toThrow(
+      /did not finish in time/,
+    );
+    expect(polled.filter((p) => p === "run_brief")).toHaveLength(3);
+  });
+
+  it("polls at least once even for a budget below one interval", async () => {
+    server.use(...magicaHandlers({ polls: [{ status: "COMPLETED", creditUsed: 10 }] }));
+
+    const result = await pollUntilTerminal("run_tiny_budget", noSleep, 1);
+
+    expect(result.creditUsed).toBe(10n);
   });
 });
 

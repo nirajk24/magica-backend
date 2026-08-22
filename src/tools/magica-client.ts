@@ -29,7 +29,9 @@ type Sleep = (ms: number) => Promise<void>;
 const defaultSleep: Sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const POLL_INTERVAL_MS = 2_000;
-const POLL_ATTEMPTS = 60;
+
+/** Long enough for an image; a slower node type passes its own budget. */
+export const DEFAULT_POLL_TIMEOUT_MS = 120_000;
 
 function headers() {
   return {
@@ -55,12 +57,20 @@ function transportError(status: number, retryAfter: string | null): ToolError {
   return new ToolError(`Magica did not accept the run (${status}).`);
 }
 
-/** Polls one already-submitted run to a terminal state and returns its output. */
+/**
+ * Polls one already-submitted run to a terminal state and returns its output.
+ *
+ * `timeoutMs` is a budget, not a deadline the provider knows about: giving up here abandons the
+ * poll, it does not cancel the run, so a resumed attempt can still collect the same result.
+ */
 export async function pollUntilTerminal(
   runId: string,
   sleep: Sleep = defaultSleep,
+  timeoutMs = DEFAULT_POLL_TIMEOUT_MS,
 ): Promise<{ output: unknown; creditUsed: bigint }> {
-  for (let attempt = 0; attempt < POLL_ATTEMPTS; attempt++) {
+  const attempts = Math.max(1, Math.ceil(timeoutMs / POLL_INTERVAL_MS));
+
+  for (let attempt = 0; attempt < attempts; attempt++) {
     const res = await fetch(`${env.MAGICA_BASE_URL}/v1/nodes/runs/${runId}`, {
       headers: headers(),
     });
@@ -101,6 +111,7 @@ export async function runMagicaNode(a: {
   input: unknown;
   onRunId: (runId: string) => Promise<void>;
   sleep?: Sleep;
+  timeoutMs?: number;
 }): Promise<{ output: unknown; creditUsed: bigint }> {
   const res = await fetch(`${env.MAGICA_BASE_URL}/v1/nodes/${a.nodeType}/run`, {
     method: "POST",
@@ -113,5 +124,5 @@ export async function runMagicaNode(a: {
   const { runId } = RunAccepted.parse(await res.json());
   await a.onRunId(runId);
 
-  return pollUntilTerminal(runId, a.sleep ?? defaultSleep);
+  return pollUntilTerminal(runId, a.sleep ?? defaultSleep, a.timeoutMs);
 }

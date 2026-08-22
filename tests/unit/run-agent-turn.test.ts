@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { ContentBlock, RunMetadata } from "@/contracts";
 import { env } from "@/lib/env";
 import { logger } from "@/lib/logger";
@@ -255,21 +255,7 @@ describe("waitpoints", () => {
       turns: [[text("Here is the plan."), toolCall("submit_plan")], [text("Starting now.")]],
     });
 
-    // `submit_plan` is not registered until Phase 4, so drive the interaction through a stub.
-    const registry = await import("@/tools/registry");
-    const spy = vi.spyOn(registry, "getTool").mockImplementation((name) =>
-      name === "submit_plan"
-        ? ({
-            name,
-            description: "d",
-            display: { label: "Waiting for approval", icon: "check" },
-            interaction: "plan_approval",
-          } as never)
-        : undefined,
-    );
-
     const result = await runAgentTurn(rec.deps, { runId: "run_1" });
-    spy.mockRestore();
 
     expect(result).toMatchObject({ status: "completed", turns: 2 });
     expect(rec.calls.filter((c) => c.startsWith("suspendOn"))).toHaveLength(1);
@@ -288,20 +274,7 @@ describe("waitpoints", () => {
       },
     });
 
-    const registry = await import("@/tools/registry");
-    const spy = vi.spyOn(registry, "getTool").mockImplementation((name) =>
-      name === "submit_plan"
-        ? ({
-            name,
-            description: "d",
-            display: { label: "Waiting", icon: "check" },
-            interaction: "plan_approval",
-          } as never)
-        : undefined,
-    );
-
     await runAgentTurn(rec.deps, { runId: "run_1" });
-    spy.mockRestore();
 
     expect(phaseAtSuspend, "the client must see it is waiting").toBe("waiting");
     expect(flushedBefore, "Trigger.dev batches metadata writes").toBe(true);
@@ -380,20 +353,7 @@ describe("failure paths", () => {
       turns: Array.from({ length: env.MAX_TURNS + 3 }, () => [toolCall("submit_plan")]),
     });
 
-    const registry = await import("@/tools/registry");
-    const spy = vi.spyOn(registry, "getTool").mockImplementation((name) =>
-      name === "submit_plan"
-        ? ({
-            name,
-            description: "d",
-            display: { label: "Waiting", icon: "check" },
-            interaction: "plan_approval",
-          } as never)
-        : undefined,
-    );
-
     const result = await runAgentTurn(rec.deps, { runId: "run_1" });
-    spy.mockRestore();
 
     expect(rec.turnsStarted, "MAX_TURNS is the hard cap on OpenRouter requests").toBe(env.MAX_TURNS);
     expect(result).toMatchObject({ status: "failed", reason: "turn limit reached" });

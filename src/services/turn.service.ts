@@ -17,6 +17,7 @@ export type LoadedTurn = {
   userId: string;
   chatId: string;
   modelId: string;
+  planMode: boolean;
   assistantMessageId: string;
   history: HistoryMessage[];
 };
@@ -80,7 +81,12 @@ async function bootstrapAssistantMessage(a: {
 export async function loadTurn(runId: string, triggerRunId?: string): Promise<LoadedTurn> {
   const run = await db.agentRun.findUniqueOrThrow({
     where: { id: runId },
-    select: { userId: true, chatId: true, chat: { select: { modelId: true } } },
+    select: {
+      userId: true,
+      chatId: true,
+      planMode: true,
+      chat: { select: { modelId: true } },
+    },
   });
 
   const assistantMessageId = await bootstrapAssistantMessage({
@@ -110,12 +116,32 @@ export async function loadTurn(runId: string, triggerRunId?: string): Promise<Lo
     userId: run.userId,
     chatId: run.chatId,
     modelId: run.chat.modelId,
+    planMode: run.planMode,
     assistantMessageId,
     history: recent
       .reverse()
       .map((m) => ({ role: m.role as HistoryMessage["role"], content: m.content })),
   };
 }
+
+/**
+ * Moves a live turn between running and suspended.
+ *
+ * INVARIANT: conditional on a non-terminal status, so a run cancelled while it was parked is not
+ * resurrected by the task waking up afterwards.
+ */
+async function markTurn(runId: string, status: "waiting" | "running"): Promise<void> {
+  await db.agentRun.updateMany({
+    where: { id: runId, status: { in: [...WRITABLE] } },
+    data: { status },
+  });
+}
+
+/** The turn is parked on a waitpoint: idle, healthy, and not to be judged stale by its age. */
+export const markTurnWaiting = (runId: string) => markTurn(runId, "waiting");
+
+/** The interaction is answered and the turn is working again. */
+export const markTurnRunning = (runId: string) => markTurn(runId, "running");
 
 /** Writes the blocks closed so far, so a crash loses only the text still streaming. */
 export async function persistTurnBlocks(a: {

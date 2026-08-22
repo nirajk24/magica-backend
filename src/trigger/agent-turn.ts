@@ -1,12 +1,21 @@
 import { metadata, task, wait } from "@trigger.dev/sdk";
 import type { WaitpointResolution } from "@/contracts";
-import { db } from "@/lib/db";
+import { getBalance } from "@/lib/credits";
 import { recordRateLimit } from "@/lib/llm-status";
 import { loadSkillRegistry } from "@/lib/skills/load";
 import { bindContext, logger } from "@/lib/logger";
 import { getTool } from "@/tools/registry";
 import { ensureCatalogPricing } from "@/tools/pricing";
-import { completeTurn, failTurn, loadTurn, persistTurnBlocks } from "@/services/turn.service";
+import {
+  completeTurn,
+  failTurn,
+  loadTurn,
+  markTurnRunning,
+  markTurnWaiting,
+  persistTurnBlocks,
+} from "@/services/turn.service";
+import { closeWaitpoint, openWaitpoint } from "@/services/waitpoint.service";
+import { buildInteractionOutcome } from "@/agent/interaction";
 import { createStreamStarter } from "@/agent/llm";
 import { runAgentTurn, type AgentTurnResult } from "@/agent/run-agent-turn";
 import { agentText } from "@/trigger/streams";
@@ -64,6 +73,7 @@ export const agentTurn = task({
 
         startStream: createStreamStarter({
           turn: { userId: turn.userId, chatId: turn.chatId, runId },
+          planMode: turn.planMode,
           runtime,
           onRequest: () => {
             requests++;
@@ -87,40 +97,79 @@ export const agentTurn = task({
           persistTurnBlocks({ messageId: turn.assistantMessageId, blocks }),
 
         /**
-         * Owns the whole waitpoint lifecycle: mint, persist, park, close out.
+         * Owns the whole waitpoint lifecycle: price, record, mint, park, close out.
          *
-         * INVARIANT: `kind` comes from the tool's `interaction`, never a literal — adding a
-         * waitpoint kind must stay a registry entry.
+         * INVARIANT: `kind` and the payload both come from the tool's own registry entry, never
+         * from a literal — adding a waitpoint kind must stay a registry entry.
+         * INVARIANT: the interaction gets a `ToolInvocation` row like any other step, so the card
+         * carries a duration and an outcome and survives the run it was created in.
          */
         suspendOn: async (interaction) => {
-          const kind = getTool(interaction.toolName)?.interaction;
-          if (!kind) throw new Error(`${interaction.toolName} is not an interaction tool`);
+          const tool = getTool(interaction.toolName);
+          const kind = tool?.interaction;
+          if (!tool || !kind) {
+            throw new Error(`${interaction.toolName} is not an interaction tool`);
+          }
+
+          // Before any row or token exists: a plan priced beyond the balance stops the turn here,
+          // leaving no card for work that was never going to run.
+          const outcome = buildInteractionOutcome({
+            tool,
+            input: interaction.input,
+            balance: await getBalance(turn.userId),
+          });
+
+          const startedAt = Date.now();
+          const invocationId = await runtime.beginInvocation({
+            toolUseId: interaction.toolUseId,
+            toolName: interaction.toolName,
+            // What the user is shown, which for a plan is the priced version rather than the
+            // model's raw tool calls.
+            input: "payload" in outcome ? outcome.payload : interaction.input,
+          });
+
+          const settle = async (raw: unknown): Promise<WaitpointResolution> => {
+            const resolution = tool.output.parse(raw) as WaitpointResolution;
+
+            await runtime.completeInvocation({
+              invocationId,
+              output: resolution,
+              durationMs: Date.now() - startedAt,
+              actualCost: null,
+            });
+
+            return resolution;
+          };
+
+          // The tool answered itself, so there is nothing to wait for.
+          if ("resolution" in outcome) return settle(outcome.resolution);
 
           const token = await wait.createToken({
             timeout: WAITPOINT_TIMEOUT,
-            idempotencyKey: `wp-${interaction.toolUseId}`,
+            idempotencyKey: `wp-${invocationId}`,
           });
 
-          const waitpoint = { id: token.id, kind, payload: interaction.input as never };
+          const waitpoint = { id: token.id, kind, payload: outcome.payload as never };
 
-          await db.waitpoint.create({ data: { ...waitpoint, runId } });
+          await openWaitpoint({ ...waitpoint, runId, invocationId });
+          await markTurnWaiting(runId);
+
           metadata.set("waitpoint", waitpoint);
           await metadata.flush();
 
-          const outcome = await wait.forToken<WaitpointResolution>(token);
-          const resolution: WaitpointResolution = outcome.ok ? outcome.output : { expired: true };
+          const answered = await wait.forToken<WaitpointResolution>(token);
+          const resolution: WaitpointResolution = answered.ok ? answered.output : { expired: true };
 
-          await db.waitpoint.update({
-            where: { id: token.id },
-            data: {
-              status: outcome.ok ? "completed" : "expired",
-              resolution: resolution as never,
-            },
+          await closeWaitpoint({
+            id: token.id,
+            status: answered.ok ? "completed" : "expired",
+            resolution,
           });
+          await markTurnRunning(runId);
 
           metadata.del("waitpoint");
 
-          return resolution;
+          return settle(resolution);
         },
 
         /** What the model is told the interaction returned; `suspendOn` did the persistence. */

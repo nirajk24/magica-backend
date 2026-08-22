@@ -675,14 +675,21 @@ This is the phase that wins or loses the trial. Everything after it is widening.
 highest-risk logic — the cheapest place to be wrong.
 
 ```
-1  lib/credits              + unit test asserting balance === SUM(ledger)
-2  tools/{define,registry}, gpt_image_2, magica-client (against MSW)
-3  trigger/magica-node-run  + the resume-not-resubmit test
-4  trigger/run-agent-turn   with fake deps → block order + segment increment tests
-5  trigger/agent-turn shell + streams + trigger.config.ts    ← first real Trigger.dev run
+0  trigger.config.ts + the F5 metadata spike                         DONE (session 6)
+1  lib/credits              + unit test asserting balance === SUM(ledger)   DONE
+2  tools/{define,registry}, gpt_image_2, magica-client (against MSW)        DONE
+3  trigger/magica-node-run  + the resume-not-resubmit test                  DONE
+4  trigger/run-agent-turn   with fake deps → block order + segment increment tests   <-- NEXT
+5  trigger/agent-turn shell + streams                        ← first real agent run
 6  services + POST send + GET chat + GET active-run + GET chats + GET credits
 7  frontend (see its LLD Phase 1)
 ```
+
+Steps 0-3 shipped with 41 passing tests and zero live spend. `trigger.config.ts` moved ahead of
+step 1 because the F5 spike needed a worker before anything depended on its answer. `lib/credits`
+gained `reconcileToolCharge` (decisions #51) and `tools/pricing.ts` gained `ensureCatalogPricing`,
+neither of which was in the original file list — both close simplifications §3.6 had flagged for
+later.
 
 **Files**
 ```
@@ -829,20 +836,43 @@ credits**; prefer `userMessage` over `error` for display; `creditUsed` is microc
 
 #### 4.1.4 `trigger/magica-node-run.ts` — the typed child task
 
+The resume rule lives in a plain exported function and the task is a one-line shell over it, so
+tests exercise the real rule instead of a copy that can drift from it.
+
 ```ts
+export async function executeMagicaNode(p: MagicaNodeRunPayload, sleep: Sleep) {
+  // If a previous attempt already submitted, resume instead of re-submitting.
+  const inv = await db.toolInvocation.findUniqueOrThrow({ where: { id: p.invocationId } });
+  if (inv.magicaRunId) return { ...(await pollUntilTerminal(inv.magicaRunId, sleep)), resumed: true };
+  return { ...(await runMagicaNode({ ...p, sleep, onRunId: (id) =>
+    db.toolInvocation.update({ where: { id: p.invocationId }, data: { magicaRunId: id } }) })),
+    resumed: false };
+}
+
 export const magicaNodeRun = task({
   id: "magica-node-run",
-  maxAttempts: 1,                                  // manual retry only (decision #20)
-  run: async (p: { invocationId: string; nodeType: string;
-                   subModelId?: string; input: unknown }) => {
-    // If a previous attempt already submitted, resume instead of re-submitting.
-    const inv = await db.toolInvocation.findUniqueOrThrow({ where: { id: p.invocationId } });
-    if (inv.magicaRunId) return pollUntilTerminal(inv.magicaRunId);   // ← never pay twice
-    return runMagicaNode({ ...p, onRunId: (id) =>
-      db.toolInvocation.update({ where: { id: p.invocationId }, data: { magicaRunId: id } }) });
-  },
+  retry: { maxAttempts: 1 },                       // manual retry only (decision #20)
+  run: (p: MagicaNodeRunPayload) =>
+    executeMagicaNode(p, (ms) => wait.for({ seconds: Math.ceil(ms / 1000) })),
 });
 ```
+
+**BUILT — three corrections found against the real SDK (session 6):**
+- **`retry: { maxAttempts: 1 }`, not top-level `maxAttempts`.** The latter is v3 syntax and does not
+  compile against `@trigger.dev/sdk@4`.
+- **`sleep` must be injected as `wait.for`**, not left to a timer, or the machine holds a CPU for the
+  full two-minute poll window instead of suspending.
+- **`AgentRun.userMessageId` is required and unique**, so any fixture must create the user `Message`
+  first. A run cannot exist without the message that caused it.
+
+Verified against a live dev worker: triggering this task proves the `dirs` scan finds it, that
+`lib/env.ts` parsed inside the Trigger.dev runtime, and that `prismaExtension({ mode: "modern" })`
+reaches Neon — a nonexistent invocation returns Prisma `P2025`, which is a query response rather
+than an init failure.
+
+**Trigger.dev's own error surface is thin:** an uncaught throw surfaces to the API as
+`TASK_RUN_UNCAUGHT_EXCEPTION` with no message and no stack. The loop must catch and convert its own
+failures, or a production incident is undiagnosable from outside the dashboard.
 
 Triggered with `idempotencyKey: invocationId`, so Trigger.dev dedups the dispatch **and** the
 `magicaRunId` check dedups the external submission. Two independent guards on the one operation that

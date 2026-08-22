@@ -42,6 +42,27 @@ export type ToolCtx = {
 /** The media a tool produced, before the orchestrator attaches cost and attribution. */
 export type MediaRef = { url: string; type: AssetDTO["type"] };
 
+/**
+ * What an interaction tool is given while its waitpoint payload is built.
+ *
+ * `price` is the registry's own estimator for another tool's call — the same function that charges
+ * at execution — so a figure shown on a card can never be one the model made up. It throws a
+ * `ToolError` naming the problem when the call cannot be priced.
+ */
+export type InteractionCtx = {
+  price: (a: { tool: string; input: unknown }) => bigint;
+  /** Microcredits the user can still spend, for a tool that must refuse work it cannot pay for. */
+  balance: bigint;
+};
+
+/**
+ * Either something worth waiting on, or an answer that makes waiting pointless.
+ *
+ * A plan whose steps the server cannot price is answered on the spot with the reason, so the model
+ * corrects it — rather than a user being asked to approve a plan that could never have run.
+ */
+export type InteractionOutcome<R> = { payload: unknown } | { resolution: R };
+
 export type AgentTool<I extends z.ZodType = z.ZodType, O extends z.ZodType = z.ZodType> = {
   name: string;
   description: string;
@@ -52,6 +73,11 @@ export type AgentTool<I extends z.ZodType = z.ZodType, O extends z.ZodType = z.Z
   output: O;
   credits: (input: z.infer<I>) => bigint;
   execute?: (input: z.infer<I>, ctx: ToolCtx) => Promise<z.infer<O>>;
+  /**
+   * Turns what the model asked for into what the waiting client renders. Only an interaction tool
+   * declares one; without it the payload is the model's input unchanged.
+   */
+  prepare?: (input: z.infer<I>, ctx: InteractionCtx) => InteractionOutcome<z.infer<O>>;
   /**
    * Pulls the media out of this tool's own output. Only the tool knows its output shape, so a tool
    * that produces files declares this and nothing in the orchestrator reads `output` directly.

@@ -32,8 +32,11 @@ export const Ok = z.object({ ok: z.literal(true) });
  * active-run response, `WaitpointResolution`, the registry's `interaction` field and the
  * `Waitpoint` table.
  *
- * Adding a kind is one entry here plus one variant in `WaitpointResolution`. The orchestrator is
- * kind-agnostic.
+ * Each kind names the payload schema a client renders it with: `plan_approval` carries a
+ * `PlanApprovalPayload`, `questions` a `QuestionsPayload`.
+ *
+ * Adding a kind is one entry here plus one payload schema and one variant in `ResolveWaitpoint`.
+ * The orchestrator is kind-agnostic.
  */
 export const WaitpointKind = z.enum(["plan_approval", "questions"]);
 export type WaitpointKind = z.infer<typeof WaitpointKind>;
@@ -122,20 +125,104 @@ export const ActiveRun = z.object({
     .nullable(),
 });
 
-export const WaitpointResolution = z.union([
-  z.object({
-    kind: z.literal("plan_approval"),
-    approved: z.boolean(),
-    feedback: z.string().max(2000).optional(),
-    executionMode: z.enum(["auto", "step_by_step"]).optional(),
-  }),
-  z.object({
-    kind: z.literal("questions"),
-    answers: z.record(z.string(), z.union([z.string(), z.array(z.string())])),
-    skipped: z.array(z.string()),
-  }),
-  z.object({ expired: z.literal(true) }),
+/**
+ * What a client may submit to `POST /waitpoints/:id/resolve`.
+ *
+ * INVARIANT: `{ expired: true }` is not in here. It is written by the server when a token times out
+ * or a run is cancelled, and accepting it from a client would let one expire its own overlay
+ * through a path that skips the timeout.
+ */
+export const PlanApprovalResolution = z.object({
+  kind: z.literal("plan_approval"),
+  approved: z.boolean(),
+  feedback: z.string().max(2000).optional(),
+  executionMode: z.enum(["auto", "step_by_step"]).optional(),
+});
+
+export const QuestionsResolution = z.object({
+  kind: z.literal("questions"),
+  answers: z.record(z.string(), z.union([z.string(), z.array(z.string())])),
+  skipped: z.array(z.string()),
+});
+
+/** Written by the server when a token times out or its run is cancelled. */
+export const WaitpointExpired = z.object({ expired: z.literal(true) });
+
+export const ResolveWaitpoint = z.discriminatedUnion("kind", [
+  PlanApprovalResolution,
+  QuestionsResolution,
 ]);
+
+/** Every way a waitpoint can end: the client's answer, or the server's expiry. */
+export const WaitpointResolution = z.union([ResolveWaitpoint, WaitpointExpired]);
+
+/**
+ * One step of a plan, as the card renders it.
+ *
+ * INVARIANT: `estimatedCredits` is the registry's own estimate for this step's tool call, produced
+ * by the same function that charges at execution. The model states no cost anywhere.
+ */
+export const PlanStepPayload = z.object({
+  key: z.string(),
+  title: z.string(),
+  description: z.string(),
+  tool: z.string(),
+  subModelId: z.string().nullable(),
+  estimatedCredits: z.string(),
+});
+
+/** The `plan_approval` waitpoint payload. Paired with `WaitpointKind.plan_approval`. */
+export const PlanApprovalPayload = z.object({
+  title: z.string(),
+  overview: z.string(),
+  steps: z.array(PlanStepPayload).min(1),
+  estimatedTotal: z.string(),
+});
+
+/**
+ * One question the agent needs answered before it can spend credits.
+ *
+ * `required` marks the asterisk on the card; it does not make an answer mandatory. Every question is
+ * skippable and the skipped ids go back to the model, which decides what to do about them.
+ */
+export const Question = z.discriminatedUnion("type", [
+  z.object({
+    id: z.string().max(64),
+    type: z.literal("text"),
+    prompt: z.string().max(300),
+    required: z.boolean().default(false),
+  }),
+  z.object({
+    id: z.string().max(64),
+    type: z.literal("image"),
+    prompt: z.string().max(300),
+    required: z.boolean().default(false),
+    maxImages: z.number().int().min(1).max(10).default(1),
+  }),
+  z.object({
+    id: z.string().max(64),
+    type: z.literal("select"),
+    prompt: z.string().max(300),
+    required: z.boolean().default(false),
+    options: z
+      .array(
+        z.object({
+          value: z.string().max(64),
+          label: z.string().max(120),
+          recommended: z.boolean().default(false),
+        }),
+      )
+      .min(2)
+      .max(8),
+    allowOther: z.boolean().default(true),
+  }),
+]);
+
+/** The `questions` waitpoint payload. Paired with `WaitpointKind.questions`. */
+export const QuestionsPayload = z.object({
+  message: z.string().max(300),
+  questions: z.array(Question).min(1).max(8),
+});
 
 export const UpdateChat = z.object({
   title: z.string().min(1).max(200).optional(),
@@ -183,7 +270,12 @@ export type ChatsQuery = z.infer<typeof ChatsQuery>;
 export type ChatsPage = z.infer<typeof ChatsPage>;
 export type MessagesQuery = z.infer<typeof MessagesQuery>;
 export type ActiveRun = z.infer<typeof ActiveRun>;
+export type ResolveWaitpoint = z.infer<typeof ResolveWaitpoint>;
 export type WaitpointResolution = z.infer<typeof WaitpointResolution>;
+export type PlanStepPayload = z.infer<typeof PlanStepPayload>;
+export type PlanApprovalPayload = z.infer<typeof PlanApprovalPayload>;
+export type Question = z.infer<typeof Question>;
+export type QuestionsPayload = z.infer<typeof QuestionsPayload>;
 export type CreditsPage = z.infer<typeof CreditsPage>;
 export type LlmStatus = z.infer<typeof LlmStatus>;
 export type TopUp = z.infer<typeof TopUp>;

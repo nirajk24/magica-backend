@@ -23,7 +23,7 @@ describe("the base prompt", () => {
 });
 
 describe("a fresh turn", () => {
-  it("sends the prompt and the conversation, nothing else", () => {
+  it("sends the conversation only, with no system message", () => {
     const messages = build({
       history: [
         { role: "user", content: "draw me a mountain" },
@@ -32,8 +32,11 @@ describe("a fresh turn", () => {
       ],
     });
 
-    expect(messages.map((m) => m.role)).toEqual(["system", "user", "assistant", "user"]);
-    expect(messages[0]?.content).toBe(SYSTEM_PROMPT);
+    expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
+    expect(
+      messages.some((m) => m.role === "system"),
+      "the SDK rejects a system message inside `messages`; it goes in `instructions`",
+    ).toBe(false);
   });
 
   it("drops an empty message rather than sending a blank turn", () => {
@@ -44,7 +47,7 @@ describe("a fresh turn", () => {
       ],
     });
 
-    expect(messages.map((m) => m.role)).toEqual(["system", "user"]);
+    expect(messages.map((m) => m.role)).toEqual(["user"]);
   });
 });
 
@@ -63,15 +66,15 @@ describe("a turn resuming after an interaction", () => {
       ],
     });
 
-    expect(messages.map((m) => m.role)).toEqual(["system", "user", "assistant", "tool"]);
+    expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "tool"]);
 
-    const assistant = messages[2];
+    const assistant = messages[1];
     expect(Array.isArray(assistant?.content) && assistant.content).toEqual([
       { type: "text", text: "Here is the plan." },
       { type: "tool-call", toolCallId: "call_plan", toolName: "submit_plan", input: { steps: [] } },
     ]);
 
-    const toolMessage = messages[3];
+    const toolMessage = messages[2];
     expect(Array.isArray(toolMessage?.content) && toolMessage.content[0]).toMatchObject({
       type: "tool-result",
       toolCallId: "call_plan",

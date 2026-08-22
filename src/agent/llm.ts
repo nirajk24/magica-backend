@@ -2,11 +2,35 @@ import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { hasToolCall, stepCountIs, streamText, type TextStreamPart, type ToolSet } from "ai";
 import type { ContentBlock } from "@/contracts";
 import { env } from "@/lib/env";
+import { AppError } from "@/lib/errors";
 import type { Logger } from "@/lib/logger";
 import { registry } from "@/tools/registry";
 import { toAiSdkTools, type ToolRuntime, type TurnContext } from "@/tools/to-ai-sdk";
-import { toModelMessages, type HistoryMessage, type TurnResolution } from "@/prompts/system";
+import { SYSTEM_PROMPT, toModelMessages, type HistoryMessage, type TurnResolution } from "@/prompts/system";
 import type { AgentTurnDeps, TurnStream, TurnStreamPart } from "@/agent/run-agent-turn";
+
+/**
+ * Turns a provider failure into copy the user can act on. A rate-limited free model is the common
+ * case and reads nothing like a crash, so it must not share the generic message.
+ *
+ * Read structurally rather than with `instanceof`: the provider bundles its own copy of
+ * `@ai-sdk/provider-utils`, so the error class it throws is not the one this package compares against.
+ */
+export function describeStreamError(error: unknown): AppError {
+  const api = error as { statusCode?: number; isRetryable?: boolean } | null;
+
+  if (api?.statusCode === 429) {
+    return new AppError("RATE_LIMITED", "The model is busy right now. Try again in a moment.");
+  }
+  if (api?.statusCode === 401 || api?.statusCode === 403) {
+    return new AppError("FORBIDDEN", "The model provider rejected this request.");
+  }
+  if (api?.isRetryable === true) {
+    return new AppError("INTERNAL", "The model is temporarily unavailable. Try again in a moment.");
+  }
+
+  return new AppError("INTERNAL", "The model stopped responding partway through.");
+}
 
 /**
  * Maps the SDK's stream parts onto ours, dropping the ones we do not act on. Written against the
@@ -28,7 +52,7 @@ export function toTurnStreamPart(part: TextStreamPart<ToolSet>): TurnStreamPart 
         input: part.input,
       };
     case "error":
-      return { type: "error", error: part.error };
+      return { type: "error", error: describeStreamError(part.error) };
     default:
       return null;
   }
@@ -78,6 +102,8 @@ export function createStreamStarter(a: {
 
     const result = streamText({
       model: openrouter.chat(modelId, { reasoning: { enabled: true, effort: "medium" } }),
+      // Not a `system` message inside `messages`: the SDK rejects that outright.
+      instructions: SYSTEM_PROMPT,
       messages,
       tools,
       stopWhen,

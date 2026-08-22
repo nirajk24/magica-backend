@@ -63,9 +63,11 @@ function assistantParts(blocks: ContentBlock[], answered: Set<string>) {
 }
 
 /**
- * Builds the request messages: base prompt, conversation, and — when resuming after an interaction —
- * the assistant's partial output with the resolution attached as that tool's result.
+ * Builds the request messages: the conversation, and — when resuming after an interaction — the
+ * assistant's partial output with the resolution attached as that tool's result.
  *
+ * INVARIANT: no `system` message. The SDK rejects one inside `messages`; the base prompt is passed
+ * as `instructions` instead.
  * INVARIANT: every `tool-call` emitted has a matching `tool-result`. A provider rejects the whole
  * request over one dangling call, so unanswerable calls are dropped rather than replayed.
  */
@@ -74,7 +76,7 @@ export function toModelMessages(a: {
   blocks: ContentBlock[];
   resolutions: TurnResolution[];
 }): ModelMessage[] {
-  const messages: ModelMessage[] = [{ role: "system", content: SYSTEM_PROMPT }];
+  const messages: ModelMessage[] = [];
 
   for (const message of a.history) {
     if (message.content !== "") messages.push({ role: message.role, content: message.content });

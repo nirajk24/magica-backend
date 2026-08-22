@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { TextStreamPart, ToolSet } from "ai";
-import { toTurnStreamPart } from "@/agent/llm";
+import { describeStreamError, toTurnStreamPart } from "@/agent/llm";
+import { AppError } from "@/lib/errors";
 
 const part = (p: unknown) => toTurnStreamPart(p as TextStreamPart<ToolSet>);
 
@@ -41,10 +42,14 @@ describe("mapping the SDK's stream onto ours", () => {
     });
   });
 
-  it("surfaces a mid-stream error, which the SDK reports as a part and not a rejection", () => {
-    const error = new Error("provider died");
+  it("surfaces a mid-stream error as user-safe copy, not the raw provider error", () => {
+    const mapped = part({ type: "error", error: new Error("provider died") });
 
-    expect(part({ type: "error", error })).toEqual({ type: "error", error });
+    expect(mapped?.type).toBe("error");
+    expect(
+      mapped?.type === "error" && mapped.error instanceof AppError,
+      "the loop persists this message, so it must already be safe to show",
+    ).toBe(true);
   });
 
   it("drops the parts we do not act on rather than passing them on as unknowns", () => {
@@ -62,5 +67,45 @@ describe("mapping the SDK's stream onto ours", () => {
     ]) {
       expect(part({ type }), `${type} should be dropped`).toBeNull();
     }
+  });
+});
+
+describe("classifying a provider failure", () => {
+  /** Detected structurally: the provider bundles its own copy of the error class. */
+  const apiError = (fields: { statusCode?: number; isRetryable?: boolean }) =>
+    Object.assign(new Error("Provider returned error"), fields);
+
+  it("says the model is busy for a rate limit, not that it crashed", () => {
+    const mapped = describeStreamError(apiError({ statusCode: 429, isRetryable: true }));
+
+    expect(mapped.code).toBe("RATE_LIMITED");
+    expect(mapped.message).toBe("The model is busy right now. Try again in a moment.");
+  });
+
+  it("separates a rejected request from an unavailable one", () => {
+    expect(describeStreamError(apiError({ statusCode: 401 })).code).toBe("FORBIDDEN");
+    expect(describeStreamError(apiError({ statusCode: 403 })).code).toBe("FORBIDDEN");
+  });
+
+  it("tells the user to try again when the provider says it is retryable", () => {
+    expect(describeStreamError(apiError({ isRetryable: true })).message).toMatch(
+      /temporarily unavailable/,
+    );
+  });
+
+  it("falls back to one generic sentence for anything unrecognised", () => {
+    expect(describeStreamError(new Error("boom")).message).toBe(
+      "The model stopped responding partway through.",
+    );
+    expect(describeStreamError(null).message).toBe(
+      "The model stopped responding partway through.",
+    );
+  });
+
+  it("never leaks the provider's own text", () => {
+    const leaky = apiError({ statusCode: 429 });
+    leaky.message = "upstream rejected credential PRIVATE-DETAIL";
+
+    expect(describeStreamError(leaky).message).not.toContain("PRIVATE");
   });
 });

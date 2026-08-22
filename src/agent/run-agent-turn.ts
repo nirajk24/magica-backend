@@ -176,9 +176,12 @@ export async function runAgentTurn(
           }
 
           case "error":
-            // A mid-stream failure arrives as a part, not a rejection.
+            // A mid-stream failure arrives as a part, not a rejection. The adapter has already
+            // turned it into user-safe copy, so it is rethrown rather than replaced.
             deps.log.error({ err: part.error, runId }, "model stream errored");
-            throw new AppError("INTERNAL", "The model stopped responding partway through.");
+            throw part.error instanceof AppError
+              ? part.error
+              : new AppError("INTERNAL", "The model stopped responding partway through.");
         }
       }
 

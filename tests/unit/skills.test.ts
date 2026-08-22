@@ -114,9 +114,9 @@ describe("the shipped skills", () => {
 
 describe("the base prompt carries the index and nothing more", () => {
   it("lists every skill's name and description", () => {
-    const prompt = buildSystemPrompt([
-      { name: "image-editing", description: "How to size and crop images." },
-    ]);
+    const prompt = buildSystemPrompt({
+      index: [{ name: "image-editing", description: "How to size and crop images." }],
+    });
 
     expect(prompt).toContain("image-editing");
     expect(prompt).toContain("How to size and crop images.");
@@ -125,7 +125,7 @@ describe("the base prompt carries the index and nothing more", () => {
   /** L1 is names and descriptions. A body here would defeat the design and re-send on every request. */
   it("never contains a skill body", () => {
     loadSkillRegistry(skillsRoot());
-    const prompt = buildSystemPrompt(skillIndex());
+    const prompt = buildSystemPrompt({ index: skillIndex() });
 
     for (const skill of shipped().values()) {
       expect(prompt, `${skill.name}'s body must be fetched, not inlined`).not.toContain(skill.body);
@@ -139,7 +139,7 @@ describe("the base prompt carries the index and nothing more", () => {
    * answer. The rules are positive now, and the exclusions are a closed list.
    */
   it("tells the model to load when a request is a skill's class of work", () => {
-    const prompt = buildSystemPrompt([{ name: "x", description: "y" }]);
+    const prompt = buildSystemPrompt({ index: [{ name: "x", description: "y" }] });
 
     expect(prompt, "guidance has to outrank the model's own defaults or it gets skipped").toMatch(
       /authoritative/i,
@@ -148,7 +148,7 @@ describe("the base prompt carries the index and nothing more", () => {
   });
 
   it("keeps the exclusions a closed list, not an open invitation to skip", () => {
-    const prompt = buildSystemPrompt([{ name: "x", description: "y" }]);
+    const prompt = buildSystemPrompt({ index: [{ name: "x", description: "y" }] });
 
     expect(prompt).toMatch(/greetings, small talk, and questions about what you can do/i);
     expect(prompt, "an open-ended excuse is what suppressed loading entirely").not.toMatch(
@@ -158,17 +158,17 @@ describe("the base prompt carries the index and nothing more", () => {
   });
 
   it("still forbids reloading, which costs a request for guidance already in hand", () => {
-    expect(buildSystemPrompt([{ name: "x", description: "y" }])).toMatch(
+    expect(buildSystemPrompt({ index: [{ name: "x", description: "y" }] })).toMatch(
       /never load the same skill twice/i,
     );
   });
 
   it("keeps capability questions answerable without a load", () => {
-    expect(buildSystemPrompt([])).toMatch(/do not load a skill to find out/i);
+    expect(buildSystemPrompt({ index: [] })).toMatch(/do not load a skill to find out/i);
   });
 
   it("omits the skill section entirely when there are no skills", () => {
-    expect(buildSystemPrompt([])).not.toMatch(/skills available to you/i);
+    expect(buildSystemPrompt({ index: [] })).not.toMatch(/skills available to you/i);
   });
 });
 

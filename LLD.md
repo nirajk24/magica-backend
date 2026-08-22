@@ -33,7 +33,7 @@ break Phase 1–3 code.** Every deferred item below plugs into a seam that ships
 | Seam | Shipped in | Later phases add | Orchestration edits needed |
 |---|---|---|---|
 | `registry` object (`tools/registry.ts`) | 1 | tools 2–7 | **zero** — one entry each |
-| `interaction?: WaitpointKind` + `WaitpointResolution` union | 4 | `questions` kind | **zero** — one entry + one union variant |
+| `interaction?: WaitpointKind` + `WaitpointResolution` union | 4 | `questions` kind | **zero, verified** — `ask_questions` is a registry entry and a payload schema, and `run-agent-turn.ts` was not touched to add it |
 | `SendMessage.attachmentIds: string[]` | 1 (accepts `[]`) | Transloadit uploads | none — route already validates ownership |
 | `?cursor` / `?search` / `?filter` query params | 1 (cursor only) | search, pin filter | additive params on one route |
 | `Chat.activePlan Json?` | 1 (column exists, always null) | step-by-step mode | none — `update_step` writes, `/chats/:id` reads |
@@ -52,7 +52,7 @@ earlier code:
 | Deferrable | Why it's safe | Phase |
 |---|---|---|
 | `crop_image`, `merge_videos`, `get_model_schema` | registry entries; the loop never names a tool | 5 |
-| `questions` waitpoint (`ask_questions`) | the interaction wrapper is kind-agnostic from Phase 4 | 6 |
+| `questions` waitpoint (`ask_questions`) | the interaction wrapper is kind-agnostic from Phase 4 | ~~6~~ — pulled into 4, because a claim about a second kind is only worth what the second kind proves |
 | Step-by-step mode + `update_step` | `activePlan` column + a system-prompt branch; auto mode unaffected | 6 |
 | Uploads (Transloadit + `/uploads/sign` + `/attachments`) | `attachmentIds: []` is valid; nothing reads attachments until they exist | 6 |
 | Search, pin, filter, bulk delete | additive query params + `PATCH`/`DELETE` on an existing route | 5 |
@@ -105,7 +105,7 @@ magica-backend/
 │   │   ├── chat.service.ts            list/get/create/rename/pin/soft-delete, ownership scoping
 │   │   ├── message.service.ts         serialization (message + toolInvocations + assets), pagination
 │   │   ├── run.service.ts             ★ the state machine — assertTransition, stale-lock, cancel
-│   │   ├── approval.service.ts        Phase 4 — waitpoint resolve, conditional UPDATE
+│   │   ├── waitpoint.service.ts       Phase 4 — open/close/resolve, conditional UPDATE
 │   │   └── attachment.service.ts      Phase 6
 │   ├── lib/
 │   │   ├── env.ts                     Phase 0 — Zod over process.env, throws at boot
@@ -127,7 +127,7 @@ magica-backend/
 │   │   ├── load-skill.ts              Phase 3
 │   │   ├── read-skill-asset.ts        Phase 3
 │   │   ├── submit-plan.ts             Phase 4
-│   │   ├── ask-questions.ts           Phase 6
+│   │   ├── ask-questions.ts           Phase 4 — shipped with it, or "kind-agnostic" is untested
 │   │   └── update-step.ts             Phase 6
 │   ├── agent/                        NOT under trigger/: see the note below
 │   │   ├── run-agent-turn.ts          Phase 1 — ★ the loop, plain fn with injected deps
@@ -338,7 +338,7 @@ export const ALLOWED_MODELS = [
 | 6 | `/api/v1/chats` | GET | **1** (list) · **5** (`search`/`filter`) | `?cursor&limit&search&filter` | `{ chats, nextCursor }` |
 | 7 | `/api/v1/chats/:id` | PATCH | **5** | `{ title?, isFavorite? }` | `{ chat }` |
 | 8 | `/api/v1/chats/:id` | DELETE | **5** | — | `{ ok: true }` |
-| 9 | `/api/v1/waitpoints/:id/resolve` | POST | **4** | `WaitpointResolution` | `{ ok: true }` |
+| 9 | `/api/v1/waitpoints/:id/resolve` | POST | **4** | `ResolveWaitpoint` | `{ ok: true }` |
 | 10 | `/api/v1/credits` | GET | **2** | `?cursor` | `{ balance, entries, nextCursor }` |
 | 11 | `/api/v1/credits/top-up` | POST | **2** | `{ amount }` + `Idempotency-Key` hdr | `{ balance }` |
 | 12 | `/api/v1/uploads/sign` | POST | **6** | `{ files[] }` | `{ params, signature }` |
@@ -382,15 +382,35 @@ export const ActiveRun = z.object({
 });
 
 // ─── 9. WAITPOINT RESOLUTION — kind-discriminated ──────────────────────────────
-export const WaitpointResolution = z.union([
-  z.object({ kind: z.literal("plan_approval"), approved: z.boolean(),
-             feedback: z.string().max(2000).optional(),
-             executionMode: z.enum(["auto","step_by_step"]).optional() }),
-  z.object({ kind: z.literal("questions"),
-             answers: z.record(z.string(), z.union([z.string(), z.array(z.string())])),
-             skipped: z.array(z.string()) }),
-  z.object({ expired: z.literal(true) }),       // server-written only
+// Two schemas, not one: the route accepts ResolveWaitpoint, which cannot express an expiry.
+// `{expired:true}` is written by the server on a timeout or a cancel, and a client that could
+// send it would be able to clear its own overlay through a path that skips the timeout.
+export const ResolveWaitpoint = z.discriminatedUnion("kind", [
+  PlanApprovalResolution,   // { kind, approved, feedback?, executionMode? }
+  QuestionsResolution,      // { kind, answers, skipped }
 ]);
+export const WaitpointResolution = z.union([ResolveWaitpoint, WaitpointExpired]);
+
+// ─── 9b. WAITPOINT PAYLOADS — what a parked client renders ─────────────────────
+// Paired with the kind. NOT the tool's input: the model's `submit_plan` input carries raw
+// toolCall arguments, and every figure below is the server's.
+export const PlanStepPayload = z.object({
+  key: z.string(), title: z.string(), description: z.string(),
+  tool: z.string(), subModelId: z.string().nullable(),
+  estimatedCredits: z.string(),                 // microcredits, from that tool's own credits()
+});
+export const PlanApprovalPayload = z.object({
+  title: z.string(), overview: z.string(),
+  steps: z.array(PlanStepPayload).min(1), estimatedTotal: z.string(),
+});
+
+export const Question = z.discriminatedUnion("type", [
+  z.object({ id, type: z.literal("text"),   prompt, required }),
+  z.object({ id, type: z.literal("image"),  prompt, required, maxImages }),
+  z.object({ id, type: z.literal("select"), prompt, required, options[{value,label,recommended}],
+             allowOther }),                     // `required` is the asterisk, not a gate: every
+]);                                             // question is skippable and skips go to the model
+export const QuestionsPayload = z.object({ message: z.string(), questions: z.array(Question).min(1).max(8) });
 
 // ─── 10/11. CREDITS ────────────────────────────────────────────────────────────
 export const CreditsPage = z.object({
@@ -1205,25 +1225,51 @@ Numbers 3 and 6 are different mechanisms — a startup check across directories,
 
 ---
 
-### Phase 4 — Plan approval, the first waitpoint · ~4h
+### Phase 4 — The waitpoint machinery · COMPLETE
 
-**Goal:** the interaction machinery — generic, so Phase 6 adds a second kind for free.
+**Goal:** the interaction machinery — generic, so a second kind costs a registry entry. Both kinds
+shipped together, which is the only way that claim gets tested rather than asserted.
 
-**Files** — `tools/submit-plan.ts`, `services/approval.service.ts`,
-`app/api/v1/waitpoints/[id]/resolve/route.ts`, `suspendOn` in the loop.
+**Files** — `tools/{submit-plan,ask-questions}.ts`, `agent/interaction.ts`,
+`services/waitpoint.service.ts`, `app/api/v1/waitpoints/[waitpointId]/resolve/route.ts`, `suspendOn`
+in the task shell. Named `waitpoint.service`, not `approval.service`: a mechanism that must not know
+what a plan is should not be named after one kind.
 
-**Build**
-- `submit_plan` per **§3.2b**: `steps[].toolCall` is **required**; orchestration parses each step's
-  input with that tool's own schema and prices it via `credits()`. **The model never states a cost.**
-- `suspendOn(interaction)`: `wait.createToken({timeout:'15m', idempotencyKey:`wp-${invocationId}`})`
-  → INSERT `Waitpoint` → `metadata.set({phase:'waiting', waitpoint})` → `await wait.forToken()`.
-- Resolve route: `WaitpointResolution.parse` → **reject `kind` mismatch** → conditional
-  `UPDATE … WHERE status='pending'` → only on a won update, `wait.completeToken(id, resolution)`.
-- 0 rows updated → already completed (`{ok}` no-op) or expired (`WAITPOINT_EXPIRED`).
+**Built**
+- `submit_plan` per **§3.2b**: `steps[].toolCall` is **required**; `prepare` parses each step's input
+  with that tool's own schema and prices it via that tool's own `credits()`. **The model never states
+  a cost** — a figure it supplies is stripped by the schema and never reaches the card.
+- `defineTool.prepare(input, {price, balance})` is the seam that allows it: it returns either the
+  payload to park on, or a resolution that makes parking pointless. An unpriceable step comes back as
+  `{approved:false, feedback}` so the model re-plans in the same message; the alternative was killing
+  a turn over a mistake the model can fix. A tool with no `prepare` parks on its input, which is all
+  `ask_questions` needed.
+- `LIMIT_EXCEEDED` is raised **before** any row or token exists, so a plan nobody could afford leaves
+  no card behind — it ends the turn with both figures in the message.
+- `suspendOn`: `prepare` → `beginInvocation` → `wait.createToken({timeout:'15m',
+  idempotencyKey:`wp-${invocationId}`})` → INSERT `Waitpoint` → run `waiting` →
+  `metadata.set({phase:'waiting', waitpoint})` → `flush()` → `wait.forToken` → close the row
+  conditionally → run `running` → `completeInvocation(output=resolution)`.
+- The interaction gets a `ToolInvocation` row like any other step. Without one the card had no
+  duration, no `Result:` row and nothing at all after a reload, and `Waitpoint.invocationId` was a
+  column written nowhere.
+- Resolve route: `ResolveWaitpoint.parse` → ownership inside the lookup → **reject a `kind` mismatch**
+  → conditional `UPDATE … WHERE status='pending'` → only on a won update,
+  `wait.completeToken(id, resolution)`. 0 rows → already answered (`{ok}` no-op) or expired
+  (`WAITPOINT_EXPIRED`, 410).
+- Plan mode is a system-prompt section keyed off the new `AgentRun.planMode`. The send route had been
+  writing `executionMode='step_by_step'` from it, which is a different thing: plan mode is how a turn
+  **starts**, `executionMode` is how an approved plan **runs** and comes from the approval.
 
-**DoD** — plan card renders with **server-priced** chips; approve resumes the same run; reject +
-feedback re-plans in the same message; double-click resolve is a no-op; letting it expire clears the
-overlay and the model wraps up; `LIMIT_EXCEEDED` fires at plan time if the priced total exceeds balance.
+**DoD** — plan card renders with **server-priced** chips ✅ · approve resumes the same run ✅ (proven
+against a real waitpoint token in dev, not in a deployed task) · reject with feedback re-plans in the
+same message ✅ · a double-clicked resolve is a no-op ✅ · expiry clears the overlay and the model
+wraps up ✅ · `LIMIT_EXCEEDED` fires at plan time ✅.
+
+**Deferred on purpose:** `run.executionMode` is not written from the resolution. Nothing reads it
+until step-by-step mode ships in Phase 6, and a column written before it is read is the dead-column
+pattern this repo keeps finding. The model is told what to do with `step_by_step` by `submit_plan`'s
+own description.
 
 ---
 
@@ -1261,7 +1307,7 @@ Ordered by value per hour. Every item is independent.
 
 | Order | Item | Why here |
 |---|---|---|
-| 1 | `ask_questions` + resolve payload | required (p109); the Phase-4 machinery is kind-agnostic, so this is mostly FE |
+| 1 | ~~`ask_questions` + resolve payload~~ — **backend done in Phase 4**; the question panel is FE | required (p109) |
 | 2 | Uploads: `/uploads/sign`, `/attachments`, quota | `attachmentIds` already validated; biggest single chunk |
 | 3 | Step-by-step + `update_step` | reads/writes `activePlan`; auto mode untouched |
 | 4 | Media library, files-in-task, attachment PATCH/DELETE | routes over an existing table |
@@ -1399,6 +1445,11 @@ from here.
 | Assuming a deploy-only build extension cannot be checked locally | a real gap ships unverified | `trigger.dev deploy --dry-run` builds the full deploy bundle without deploying and prints its path. Inspect it. `additionalFiles` is a no-op in dev because dev runs from source, so the dry run is the *only* local way to see it |
 | A field whose name promises more than it holds | a client wires the model pill to `lastRoutedModel` and shows null until something breaks, then the name of the model that *failed* | it was only ever written on a rate limit. Renamed `limitedModel`, and the three model questions are answered by three different places: configured = `ChatDTO.modelId`, served = `MessageDTO.aiModel`, available = `LlmStatus` |
 | A column read everywhere and written nowhere | `MessageDTO.aiModel` was in the schema, the select, the DTO and the contract, and always null | write it at *bootstrap*, not finalize, so a turn that crashes still names the model that was working on it |
+| `wait.forToken` left on its default timeout | a turn parks for 10 minutes when the design says 15, and the discrepancy only shows up as a waitpoint that expired early | the default is 10m and is not stated at the call site. Ours passes `timeout: "15m"` explicitly |
+| An interaction tool with no `ToolInvocation` row | the plan card has no duration, no result and vanishes on reload, because the persisted timeline renders from invocations | park inside the same begin/complete pair every other tool uses. It also fills `Waitpoint.invocationId`, which was otherwise a column written nowhere |
+| A run parked on a waitpoint left in `running` | `ActiveRun.status` declares `waiting` and nothing ever writes it, so a client cannot tell a thinking turn from one that is asking a question | flip to `waiting` when the token is minted and back to `running` when it resolves, both conditional on a non-terminal status so a cancel is not undone |
+| Unconditional writes when the task wakes up | a cancel that swept the row to `expired`, or a resolve that already landed, is overwritten by the task finishing its own bookkeeping afterwards | every post-park write is `updateMany … WHERE status='pending'` / `WHERE status IN (non-terminal)` |
+| A client able to send the server's own resolution variant | `{expired:true}` is in `WaitpointResolution`, so a client could expire its own waitpoint through a path that skips the timeout | the route parses `ResolveWaitpoint`, which has no expiry variant. The union is only assembled where the server writes it |
 | A fixed number of `..` hops to a shipped data directory | the bundle puts `agent-skills/` at its root and the compiled task two levels down at `src/trigger/`, so three hops lands outside the bundle entirely — measured, not guessed | search upward from `import.meta.dirname`, bounded, and throw when absent. `findSkillsDir` is extracted so a test can assert the real bundle layout |
 
 ---

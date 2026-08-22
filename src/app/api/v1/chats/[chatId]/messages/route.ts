@@ -54,7 +54,8 @@ async function admitRun(a: Admission): Promise<boolean> {
           userId: a.userId,
           userMessageId: a.userMessageId,
           idempotencyKey: a.idempotencyKey,
-          executionMode: a.planMode ? "step_by_step" : "auto",
+          // Not `executionMode`: that is how an *approved plan* runs and is set from the approval.
+          planMode: a.planMode,
         },
       });
 

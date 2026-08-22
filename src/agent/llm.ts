@@ -100,6 +100,7 @@ function interactionStops() {
  */
 export function createStreamStarter(a: {
   turn: TurnContext;
+  planMode: boolean;
   runtime: ToolRuntime;
   onRequest: () => void;
   onRateLimited: (a: { modelId: string; retryAfterSeconds?: number }) => Promise<void>;
@@ -131,7 +132,7 @@ export function createStreamStarter(a: {
     const result = streamText({
       model: openrouter.chat(modelId, { reasoning: { enabled: true, effort: "medium" } }),
       // Not a `system` message inside `messages`: the SDK rejects that outright.
-      instructions: buildSystemPrompt(),
+      instructions: buildSystemPrompt({ planMode: a.planMode }),
       messages,
       tools,
       stopWhen,

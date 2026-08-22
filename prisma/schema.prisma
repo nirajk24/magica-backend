@@ -133,6 +133,7 @@ model AgentRun {
   assistantMessageId String?          @unique
   assistantMessage   Message?         @relation("RunAssistantMessage", fields: [assistantMessageId], references: [id], onDelete: SetNull)
   attempt            Int              @default(1)
+  planMode           Boolean          @default(false)
   executionMode      String           @default("auto")
   idempotencyKey     String           @unique
   turns              Int              @default(0)

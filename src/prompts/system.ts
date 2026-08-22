@@ -47,19 +47,33 @@ its guidance stays above for the rest of the conversation.
 Skip skills for greetings, small talk, and questions about what you can do. Those need no guidance.`;
 
 /**
- * The base prompt plus the registry's skill index.
+ * What plan mode asks for. The user has said in advance that they want to see the work before it
+ * happens, which no tool schema can express.
+ */
+const PLAN_MODE = `The user turned on plan mode for this message. Call \`submit_plan\` and wait for
+their approval before any tool that costs credits. Answering a question or loading guidance needs no
+plan.`;
+
+/**
+ * The base prompt, the registry's skill index, and anything the user asked for on this send.
  *
  * INVARIANT: names and descriptions only. The bodies are what the loader tools exist to fetch, and
  * putting them here would both defeat that design and re-send every skill on every request.
  */
 export function buildSystemPrompt(
-  index: { name: string; description: string }[] = skillIndex(),
+  a: { planMode?: boolean; index?: { name: string; description: string }[] } = {},
 ): string {
-  if (index.length === 0) return BASE_PROMPT;
+  const index = a.index ?? skillIndex();
+  const sections = [BASE_PROMPT];
 
-  const listing = index.map((skill) => `- ${skill.name}: ${skill.description}`).join("\n");
+  if (a.planMode) sections.push(PLAN_MODE);
 
-  return `${BASE_PROMPT}\n\n${SKILL_RULES}\n\nSkills available to you:\n${listing}`;
+  if (index.length > 0) {
+    const listing = index.map((skill) => `- ${skill.name}: ${skill.description}`).join("\n");
+    sections.push(SKILL_RULES, `Skills available to you:\n${listing}`);
+  }
+
+  return sections.join("\n\n");
 }
 
 /** One prior message, projected out of a `Message` row so this stays a pure function. */

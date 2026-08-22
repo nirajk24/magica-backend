@@ -134,6 +134,24 @@ describe("POST /chats/:id/messages", () => {
     );
   });
 
+  it("records plan mode on the run without pre-deciding how an approved plan runs", async () => {
+    const body = await envelope<{ runId: string }>(
+      await post("new", { content: "plan this out", planMode: true }),
+    );
+
+    const run = await db.agentRun.findUniqueOrThrow({ where: { id: body.data!.runId } });
+    expect(run.planMode).toBe(true);
+    expect(run.executionMode, "step mode is chosen at approval, not at send").toBe("auto");
+  });
+
+  it("defaults plan mode off", async () => {
+    const body = await envelope<{ runId: string }>(await post("new", { content: "just do it" }));
+
+    await expect(
+      db.agentRun.findUniqueOrThrow({ where: { id: body.data!.runId } }),
+    ).resolves.toMatchObject({ planMode: false });
+  });
+
   it("holds the admission reserve while the run is in flight", async () => {
     const userId = clerk.userId!;
     await post("new", { content: "hello" });

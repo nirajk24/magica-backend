@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ContentBlock } from "@/contracts";
 import { buildSystemPrompt, toModelMessages } from "@/prompts/system";
 
-const SYSTEM_PROMPT = buildSystemPrompt([]);
+const SYSTEM_PROMPT = buildSystemPrompt({ index: [] });
 
 const build = (a: Partial<Parameters<typeof toModelMessages>[0]>) =>
   toModelMessages({ history: [], blocks: [], resolutions: [], ...a });
@@ -16,6 +16,20 @@ describe("the base prompt", () => {
 
   it("forbids inventing a url, which is the one hallucination that looks real", () => {
     expect(SYSTEM_PROMPT).toMatch(/never\s+write\s+a\s+file\s+URL\s+yourself/i);
+  });
+
+  it("says nothing about planning unless the user asked for it", () => {
+    expect(SYSTEM_PROMPT).not.toMatch(/submit_plan/);
+  });
+
+  it("asks for a plan first when plan mode is on, without naming a tool anywhere else", () => {
+    const planning = buildSystemPrompt({ planMode: true, index: [] });
+
+    expect(planning).toMatch(/submit_plan/);
+    expect(planning).toMatch(/before any tool that costs credits/i);
+    expect(planning.startsWith(SYSTEM_PROMPT), "plan mode is added to the base, not a rewrite").toBe(
+      true,
+    );
   });
 
   it("asks for a sentence before each tool call, and names more than images", () => {

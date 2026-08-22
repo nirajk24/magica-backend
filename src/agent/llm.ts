@@ -9,12 +9,8 @@ import { toModelMessages, type HistoryMessage, type TurnResolution } from "@/pro
 import type { AgentTurnDeps, TurnStream, TurnStreamPart } from "@/agent/run-agent-turn";
 
 /**
- * The only place the AI SDK's stream vocabulary is read. Written against the SDK's own union so a
- * renamed field fails to compile here rather than silently yielding nothing — `text-delta` carrying
- * `.text` and `tool-call` carrying `.input` are both v7 names that differ from v5.
- *
- * Parts we do not act on are dropped: the SDK emits start/finish/step and streaming tool-input
- * events we have no use for, and the final `tool-call` already carries the complete input.
+ * Maps the SDK's stream parts onto ours, dropping the ones we do not act on. Written against the
+ * SDK's own union, so a renamed field fails to compile rather than silently yielding nothing.
  */
 export function toTurnStreamPart(part: TextStreamPart<ToolSet>): TurnStreamPart | null {
   switch (part.type) {
@@ -47,10 +43,7 @@ async function* mapParts(
   }
 }
 
-/**
- * Every tool that parks the turn instead of running. Derived from the registry, so declaring a new
- * interaction kind needs no edit here.
- */
+/** Stop conditions for the tools that park the turn instead of running. */
 function interactionStops() {
   return Object.values(registry)
     .filter((tool) => tool.interaction)
@@ -58,19 +51,11 @@ function interactionStops() {
 }
 
 /**
- * Builds the loop's `startStream` dependency: the provider, the tool set, the stop conditions and
- * the part mapping, so the loop itself never names a provider or an SDK type.
+ * Builds the loop's `startStream`: provider, tool set, stop conditions and part mapping. `onRequest`
+ * fires once per model request, including the tool rounds the SDK makes inside one call.
  *
- * `onRequest` fires once per model request, including the tool rounds the SDK makes inside a single
- * call. Those are invisible to the loop, so this is the only place the day's request spend can be
- * counted at all.
- *
- * INVARIANT: reasoning is requested at the MODEL, via `.chat(id, { reasoning })`. `streamText` has a
- * top-level `reasoning` option that this provider never reads — passing it there yields no thinking
- * tokens and no error, and the Thinking row stays empty forever.
- *
- * INVARIANT: `.chat(id)`, never `openrouter(id)`. The first declared overload returns a completion
- * model, so the callable form infers the wrong class for every chat model.
+ * INVARIANT: reasoning is requested at the model. `streamText`'s top-level `reasoning` option is
+ * silently ignored by this provider, and the Thinking row then stays empty forever.
  */
 export function createStreamStarter(a: {
   turn: TurnContext;

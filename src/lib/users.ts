@@ -13,16 +13,10 @@ const emailFromClerk: EmailResolver = async (userId) => {
 
 /**
  * Creates the local `User` row for an authenticated Clerk id and grants its signup credits.
- * `defineRoute` calls it before every handler, so no route has to check whether the account exists
- * and the Clerk webhook stays a bonus rather than a prerequisite.
+ * `defineRoute` calls it before every handler, so no route has to check the account exists.
  *
- * INVARIANT: idempotent under concurrency and after a crash. Both writes absorb a duplicate — the
- * row through `ON CONFLICT DO NOTHING`, the grant through its ledger key — and the grant is what
- * the next call tests, so a process that dies between them repairs itself rather than leaving an
- * account stuck at a zero balance.
- *
- * Deliberately not one transaction: a transaction blocking on the row's unique index holds a pool
- * connection for the whole wait, and only the ledger write actually needs atomicity.
+ * INVARIANT: idempotent under concurrency and after a crash — the grant, not the row, is what the
+ * next call tests, so a process that dies between the two writes repairs itself.
  */
 export async function ensureUserWithGrant(
   userId: string,

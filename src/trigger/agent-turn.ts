@@ -15,12 +15,9 @@ export type AgentTurnPayload = { runId: string };
 const WAITPOINT_TIMEOUT = "15m";
 
 /**
- * One assistant turn, end to end. This is the only place the injected seams of `runAgentTurn` are
- * bound to their real implementations — Trigger.dev metadata and streams, Postgres through
- * `turn.service`, and OpenRouter through `llm`.
- *
- * `maxAttempts: 1` because retries are manual (decision #20): an automatic one would replay
- * narrative the user has already seen and regenerate tool ids that no longer match persisted rows.
+ * One assistant turn, end to end: the only place `runAgentTurn`'s seams are bound to real
+ * implementations. `maxAttempts: 1` because retries are manual — an automatic one would replay
+ * narrative the user has already seen.
  */
 export const agentTurn = task({
   id: "agent-turn",
@@ -29,8 +26,7 @@ export const agentTurn = task({
   run: async ({ runId }: AgentTurnPayload): Promise<AgentTurnResult> => {
     const log = bindContext(logger, { runId });
 
-    // Awaited before the first estimate so tools are priced from the live catalog rather than the
-    // committed fallback. A failure here is not an error; the fallback stands.
+    // Priced from the live catalog before the first estimate; on failure the committed table stands.
     await ensureCatalogPricing();
 
     const turn = await loadTurn(runId);
@@ -83,12 +79,10 @@ export const agentTurn = task({
           persistTurnBlocks({ messageId: turn.assistantMessageId, blocks }),
 
         /**
-         * Owns the whole waitpoint lifecycle: mint the token, persist the row a reloading client
-         * reads, park with zero compute, then close the row out. Keeping it in one place is why no
-         * token id has to be carried between seams.
+         * Owns the whole waitpoint lifecycle: mint, persist, park, close out.
          *
-         * INVARIANT: `kind` comes from the tool's own `interaction`, never a literal. Adding a
-         * waitpoint kind is a registry entry, and hardcoding one here would undo that.
+         * INVARIANT: `kind` comes from the tool's `interaction`, never a literal — adding a
+         * waitpoint kind must stay a registry entry.
          */
         suspendOn: async (interaction) => {
           const kind = getTool(interaction.toolName)?.interaction;
@@ -121,7 +115,7 @@ export const agentTurn = task({
           return resolution;
         },
 
-        /** What the model is told the interaction returned. No persistence — `suspendOn` did that. */
+        /** What the model is told the interaction returned; `suspendOn` did the persistence. */
         recordResolution: ({ interaction, resolution }) =>
           Promise.resolve({
             toolUseId: interaction.toolUseId,

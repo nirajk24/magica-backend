@@ -9,15 +9,16 @@ describe("the base prompt", () => {
   it("tells the model how to read a failed tool result", () => {
     expect(SYSTEM_PROMPT, "the wrapper returns ok:false instead of throwing").toContain('"ok": false');
     expect(SYSTEM_PROMPT).toMatch(/retryable/);
-    expect(SYSTEM_PROMPT).toMatch(/same\s+arguments/);
+    expect(SYSTEM_PROMPT).toMatch(/arguments\s+that just failed/);
   });
 
   it("forbids inventing a url, which is the one hallucination that looks real", () => {
-    expect(SYSTEM_PROMPT).toMatch(/never write a URL yourself/i);
+    expect(SYSTEM_PROMPT).toMatch(/never\s+write\s+a\s+file\s+URL\s+yourself/i);
   });
 
-  it("asks for a sentence before each tool call, which is what breaks the step group", () => {
-    expect(SYSTEM_PROMPT).toMatch(/before each tool call/i);
+  it("asks for a sentence before each tool call, and names more than images", () => {
+    expect(SYSTEM_PROMPT).toMatch(/before\s+each\s+tool\s+call/i);
+    expect(SYSTEM_PROMPT, "Magica is not image-only").toMatch(/video/i);
   });
 });
 

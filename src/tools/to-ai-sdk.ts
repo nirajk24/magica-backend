@@ -4,22 +4,14 @@ import { AppError, ToolError } from "@/lib/errors";
 import type { Logger } from "@/lib/logger";
 import type { AgentTool, NodeRunRequest } from "@/tools/define";
 
-/**
- * What the model receives back from a tool. Failures come back as data rather than as a thrown
- * error so the model always has something it can read and react to — a rejected prompt is a normal
- * path here, not an exception.
- */
+/** What the model gets back. Failures are data, not throws: a rejected prompt is a normal path. */
 export type ToolOutcome =
   | { ok: true; data: unknown }
   | { ok: false; error: string; retryable: boolean };
 
 export type TurnContext = { userId: string; chatId: string; runId: string };
 
-/**
- * Every effect the wrapper needs. Each method owns its own persistence and its own credit movement,
- * so this file holds the ordering policy and nothing else — which is what lets the whole money path
- * be tested without Postgres.
- */
+/** Every effect the wrapper orders but does not perform. Kept injectable so the ordering is testable. */
 export type ToolRuntime = {
   isRunActive: () => Promise<boolean>;
   beginInvocation: (a: {
@@ -47,7 +39,7 @@ export type ToolRuntime = {
   log: Logger;
 };
 
-/** Only our own error types carry copy that is safe for a user and useful to a model. */
+/** Only our own error types carry copy safe to show a user. */
 function toolFailure(error: unknown): { error: string; retryable: boolean } {
   if (error instanceof ToolError) return { error: error.message, retryable: error.retryable };
   if (error instanceof AppError) return { error: error.message, retryable: false };
@@ -67,16 +59,11 @@ function describeInvalidInput(error: z.ZodError): string {
 }
 
 /**
- * Turns registry entries into AI SDK tools, wrapping each one in the order that keeps the ledger
- * honest: cancel guard → validate → record → charge → execute → validate → settle.
+ * Turns registry entries into AI SDK tools, wrapped in the order that keeps the ledger honest:
+ * cancel guard → validate → record → charge → execute → validate → settle.
  *
- * INVARIANT: the charge happens BEFORE `execute`, so exhaustion is caught before an external cost is
- * incurred and there is never a late-settle race. The window this leaves — charged, then the process
- * dies before the work starts — is closed by the retry reset path, not by charging afterwards.
- *
- * INVARIANT: a tool declaring `interaction` is registered with NO `execute`. That is what makes the
- * SDK emit the call and end the step, which is how the turn parks on a waitpoint. Giving it an
- * `execute` would silently turn an approval gate into a normal tool call.
+ * INVARIANT: the charge precedes `execute`, so exhaustion is caught before an external cost.
+ * INVARIANT: a tool declaring `interaction` gets NO `execute` — that is what parks the turn.
  */
 export function toAiSdkTools(
   tools: Record<string, AgentTool>,

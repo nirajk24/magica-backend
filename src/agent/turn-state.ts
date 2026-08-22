@@ -7,16 +7,11 @@ type OpenReasoning = { text: string; startedAt: number };
 export type TurnState = ReturnType<typeof createTurnState>;
 
 /**
- * Accumulates one assistant turn's content blocks and their realtime projection.
+ * Accumulates one turn's content blocks and their realtime projection. Owns two rules: a closed
+ * `text` block ends a step group, and only `text` blocks consume the agent-text stream.
  *
- * Two rules live here and nowhere else. **Segments**: a closed `text` block ends a step group, so
- * whatever comes next starts a new one — reasoning and tool rows are counted inside a group, not as
- * breaks. **Stream offsets**: only `text` blocks consume the agent-text stream, so only they carry
- * `chars`, and the count is written when the block closes so a closed block's slice never moves.
- *
- * INVARIANT: prose is added through `appendText` only. Reasoning is held separately and leaves as
- * `reasoningTail()` while live and a `thinking` block once closed — appending it to the text stream
- * would offset every following text block by the length of the transcript.
+ * INVARIANT: prose goes in through `appendText` only. Reasoning leaves as `reasoningTail()` or a
+ * closed `thinking` block, never onto the stream, or every later text block is offset.
  */
 export function createTurnState() {
   const closed: ContentBlock[] = [];
@@ -60,7 +55,7 @@ export function createTurnState() {
       reasoning.text += delta;
     },
 
-    /** The bounded window sent as `RunMetadata.reasoningText`; the full text is kept for the block. */
+    /** The bounded window sent as `RunMetadata.reasoningText`; the block keeps the full text. */
     reasoningTail(): string | undefined {
       if (!reasoning) return undefined;
       return reasoning.text.slice(-REASONING_TAIL_CHARS);
@@ -80,21 +75,18 @@ export function createTurnState() {
       return true;
     },
 
-    /** Closes any open text block first, which is what makes the tool call start a new step group. */
+    /** Closes any open text block first, which starts the new step group. */
     pushToolUse(a: { id: string; name: string; input: unknown }): void {
       closeText();
       closed.push({ segment: takeSegment(), type: "tool_use", ...a });
     },
 
-    /**
-     * The assistant footer, not a step. It joins the current group rather than taking the queued
-     * break — consuming one would render a step group whose only row is a token count.
-     */
+    /** The assistant footer, not a step: it joins the current group and never takes the break. */
     pushUsage(a: { inputTokens: number; outputTokens: number }): void {
       closed.push({ segment, type: "usage", ...a });
     },
 
-    /** Ends the current step group without emitting a block — used when a waitpoint resolves. */
+    /** Ends the current step group without emitting a block, for a resolved waitpoint. */
     breakSegment(): void {
       breakPending = true;
     },
@@ -103,11 +95,7 @@ export function createTurnState() {
       return [...closed];
     },
 
-    /**
-     * Structure only, bounded to the newest `MAX_PROJECTED_BLOCKS` because `RunMetadata.blocks`
-     * caps at 60 and a rejected snapshot would take the whole turn down. The complete timeline is
-     * read back over REST, so the live view losing its oldest rows costs nothing.
-     */
+    /** Structure only, bounded because a snapshot over `RunMetadata.blocks`' cap kills the turn. */
     projection(): BlockProjection[] {
       const projected: BlockProjection[] = closed.map((block) => ({
         segment: block.segment,
@@ -123,15 +111,12 @@ export function createTurnState() {
       return projected.slice(-MAX_PROJECTED_BLOCKS);
     },
 
-    /** Characters already claimed by closed text blocks — the offset the live block starts at. */
+    /** Where the live block starts: characters already claimed by closed text blocks. */
     streamOffset(): number {
       return streamChars;
     },
 
-    /**
-     * How many step groups the emitted blocks occupy. Derived from the blocks, never from the
-     * pending break — a turn that ends on text has a break queued that nothing will ever fill.
-     */
+    /** Step groups the emitted blocks occupy, derived from the blocks and never the pending break. */
     segments(): number {
       const highest = closed.reduce((max, block) => Math.max(max, block.segment), -1);
       const open = text === "" ? -1 : peekSegment();

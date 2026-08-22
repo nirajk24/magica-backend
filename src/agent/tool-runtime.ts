@@ -11,10 +11,7 @@ const ACTIVE = ["queued", "running", "waiting"] as const;
 
 type Invocations = RunMetadata["invocations"];
 
-/**
- * Reads the run's invocations back in the shape the live tool cards render from. Read rather than
- * accumulated in memory, so a resumed attempt publishes the same list a fresh one would.
- */
+/** The run's invocations in the shape the live tool cards render from, read rather than accumulated. */
 async function projectInvocations(runId: string): Promise<Invocations> {
   const rows = await db.toolInvocation.findMany({
     where: { runId },
@@ -44,12 +41,8 @@ async function projectInvocations(runId: string): Promise<Invocations> {
 }
 
 /**
- * The Postgres and credits half of `toAiSdkTools`' seam. Holds every effect the wrapper orders but
- * does not perform, so the ordering policy stays testable without a database and the persistence
- * stays in one place.
- *
- * `publish` is injected rather than calling `metadata.set` directly, because this module is also
- * exercised outside a Trigger.dev run.
+ * The Postgres and credits half of `toAiSdkTools`' seam. `publish` is injected rather than calling
+ * `metadata.set`, so this runs outside a Trigger.dev run too.
  */
 export function createToolRuntime(a: {
   turn: TurnContext;
@@ -73,10 +66,7 @@ export function createToolRuntime(a: {
       return run !== null && ACTIVE.includes(run.status as (typeof ACTIVE)[number]);
     },
 
-    /**
-     * Idempotent on `(runId, toolUseId)`: a replayed step reuses its row rather than opening a
-     * second one, which is what keeps `charge:{invocationId}` a stable idempotency key.
-     */
+    /** Idempotent on `(runId, toolUseId)`, which keeps `charge:{invocationId}` a stable key. */
     async beginInvocation({ toolUseId, toolName, input }) {
       const invocation = await db.toolInvocation.upsert({
         where: { runId_toolUseId: { runId: turn.runId, toolUseId } },
@@ -97,7 +87,7 @@ export function createToolRuntime(a: {
       return invocation.id;
     },
 
-    /** Records the estimate on the card in the same transaction that moves the credits. */
+    /** Writes the estimate onto the card in the transaction that moves the credits. */
     async chargeEstimate({ invocationId, amount }) {
       await db.$transaction(async (tx) => {
         await chargeTool(tx, { userId: turn.userId, runId: turn.runId, invocationId, amount });
@@ -111,12 +101,10 @@ export function createToolRuntime(a: {
     },
 
     /**
-     * Dispatches the provider call as a durable child run so the agent machine suspends while it
-     * polls instead of holding a CPU for the whole node run.
+     * Dispatches the provider call as a durable child run, so the machine suspends between polls.
      *
-     * INVARIANT: `idempotencyKey` is the invocation. Trigger.dev then dedups the dispatch, and the
-     * child's own `magicaRunId` check dedups the external submission — two independent guards on
-     * the one operation that spends real money.
+     * INVARIANT: keyed on the invocation. Trigger.dev dedups the dispatch and the child's
+     * `magicaRunId` check dedups the submission — two guards on the one call that costs money.
      */
     async runNode({ invocationId, request }) {
       const result = await magicaNodeRun.triggerAndWait(
@@ -150,9 +138,8 @@ export function createToolRuntime(a: {
       });
 
       if (actualCost !== null) {
-        // Its own transaction, and the shortfall is swallowed: the work is already paid for, so
-        // failing a finished step over a rounding delta achieves nothing, and the rollback would
-        // drop the ledger row with it.
+        // Swallowed on purpose: the work is already paid for, so failing a finished step over a
+        // rounding delta achieves nothing.
         try {
           await db.$transaction((tx) =>
             reconcileToolCharge(tx, {
@@ -172,7 +159,7 @@ export function createToolRuntime(a: {
       await publish();
     },
 
-    /** A failed step is free: the charge taken before `execute` is reversed by the amount recorded. */
+    /** A failed step is free: the pre-execute charge is reversed by the amount recorded. */
     async failInvocation({ invocationId, message, durationMs }) {
       await db.$transaction(async (tx) => {
         await refundToolCharge(tx, {

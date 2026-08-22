@@ -19,11 +19,7 @@ export type LoadedTurn = {
   history: HistoryMessage[];
 };
 
-/**
- * Prisma's JSON input type cannot express a discriminated union whose `tool_use.input` is `unknown`.
- * The blocks are already Zod-validated when they are built, so this is the narrowing Prisma's types
- * cannot do rather than an escape from validation.
- */
+/** Prisma's JSON input type cannot express a union carrying `unknown`; the blocks are validated. */
 const asJson = (blocks: ContentBlock[]) => blocks as unknown as Prisma.InputJsonValue;
 
 const textOf = (blocks: ContentBlock[]) =>
@@ -33,13 +29,10 @@ const textOf = (blocks: ContentBlock[]) =>
     .join("\n\n");
 
 /**
- * Creates the assistant row this run will write into, or finds the one a previous attempt already
- * created.
+ * The assistant row this run writes into, creating it or finding a previous attempt's.
  *
- * INVARIANT: relies on the `one_assistant_message_per_run` partial unique index. Prisma cannot
- * express a `WHERE` clause on an index, so it cannot `upsert` against it — insert and absorb the
- * conflict instead. That is what makes the bootstrap idempotent with no lock and no read-then-write
- * race between two attempts of the same run.
+ * INVARIANT: insert-and-absorb, not upsert — `one_assistant_message_per_run` is a partial index
+ * Prisma cannot target, and this is what makes the bootstrap idempotent with no lock.
  */
 async function bootstrapAssistantMessage(a: { runId: string; chatId: string }): Promise<string> {
   try {
@@ -61,10 +54,7 @@ async function bootstrapAssistantMessage(a: { runId: string; chatId: string }): 
   }
 }
 
-/**
- * Everything the turn needs to start: the run, its chat's model, the bounded history, and the
- * assistant row to write into. Marks the run `running` on the way through.
- */
+/** Everything the turn needs to start. Marks the run `running` on the way through. */
 export async function loadTurn(runId: string): Promise<LoadedTurn> {
   const run = await db.agentRun.findUniqueOrThrow({
     where: { id: runId },
@@ -101,10 +91,7 @@ export async function loadTurn(runId: string): Promise<LoadedTurn> {
   };
 }
 
-/**
- * Writes the blocks closed so far, so a crash mid-turn loses only the text still streaming. Called
- * at block boundaries rather than per delta.
- */
+/** Writes the blocks closed so far, so a crash loses only the text still streaming. */
 export async function persistTurnBlocks(a: {
   messageId: string;
   blocks: ContentBlock[];
@@ -125,14 +112,11 @@ async function creditsSpent(runId: string): Promise<bigint> {
 }
 
 /**
- * The terminal write, in one transaction: the message, the run, and the admission refund.
+ * The terminal write in one transaction: the message, the run, and the admission refund.
  *
- * INVARIANT: the run update is conditional on a non-terminal status. A cancelled run must not be
- * resurrected as `completed` by a turn that was already mid-flight — without the condition, cancel
- * would silently lose to whichever write landed last.
- *
- * INVARIANT: the admission hold is refunded on EVERY terminal path, so the net cost of a turn is the
- * sum of its tool charges. `refundAdmission` is keyed, so a replayed finalize pays out once.
+ * INVARIANT: the run update is conditional on a non-terminal status, or a cancel loses to a turn
+ * that was already mid-flight.
+ * INVARIANT: the hold is refunded on every terminal path, so a turn costs its tool charges alone.
  */
 async function finalizeTurn(a: {
   runId: string;

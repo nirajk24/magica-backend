@@ -5,11 +5,7 @@ import type { Logger } from "@/lib/logger";
 import { getTool } from "@/tools/registry";
 import { createTurnState } from "@/agent/turn-state";
 
-/**
- * The stream parts the loop acts on. The AI SDK emits many more; the adapter that wraps
- * `streamText` maps what matters onto this union and drops the rest, so provider and SDK naming
- * churn is confined to that one file rather than to the loop.
- */
+/** The stream parts the loop acts on. The adapter maps the SDK's larger union onto this. */
 export type TurnStreamPart =
   | { type: "text-delta"; text: string }
   | { type: "reasoning-delta"; text: string }
@@ -48,7 +44,7 @@ export type AgentTurnDeps = {
   flushMetadata: () => Promise<void>;
   persistBlocks: (a: { blocks: ContentBlock[]; reasoningText?: string }) => Promise<void>;
   suspendOn: (interaction: PendingInteraction) => Promise<WaitpointResolution>;
-  /** Returns the record to replay to the model as that tool's result on the next request. */
+  /** Returns the record replayed to the model as that tool's result next request. */
   recordResolution: (a: {
     interaction: PendingInteraction;
     resolution: WaitpointResolution;
@@ -69,18 +65,14 @@ export type AgentTurnResult = {
   reason?: string;
 };
 
-/**
- * Usage is recorded all-or-nothing. Both counts are `number | undefined` in the SDK, and `?? 0`
- * would render "0 tokens" in the assistant footer — a wrong number rather than a missing one. The
- * contracts already model absence.
- */
+/** All-or-nothing: `?? 0` would render "0 tokens", a wrong number rather than a missing one. */
 function normalizeUsage(usage: TurnUsage) {
   return usage.inputTokens !== undefined && usage.outputTokens !== undefined
     ? { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens }
     : null;
 }
 
-/** Provider text and stack traces must never reach a user; only our own errors carry safe copy. */
+/** Only our own error types carry copy safe to show a user. */
 function safeReason(error: unknown): string {
   if (error instanceof AppError || error instanceof ToolError) return error.message;
   return "The assistant could not finish this turn.";
@@ -88,17 +80,11 @@ function safeReason(error: unknown): string {
 
 /**
  * One assistant turn: stream the model, accumulate blocks, park on an interaction if the model asks
- * for one, and finalize exactly once.
+ * for one, finalize once. Every dependency is injected, so the control flow is testable with fakes.
  *
- * Every dependency that touches Trigger.dev, Postgres or OpenRouter is injected, so the control flow
- * — block order, segment breaks, the turn cap, and which finalize runs — is testable with fakes.
- *
- * INVARIANT: exactly one of `finalize` / `finalizeFailed` runs on every path, including a throw.
- * Both refund the admission hold, so an escaping error would leave the hold charged forever.
- *
- * INVARIANT: nothing throws out of here. Trigger.dev reports an uncaught throw as
- * `TASK_RUN_UNCAUGHT_EXCEPTION` with no message and no stack, which is undiagnosable from outside
- * the dashboard, so failures are converted into a returned `status` instead.
+ * INVARIANT: exactly one of `finalize`/`finalizeFailed` runs on every path — both refund the
+ * admission hold.
+ * INVARIANT: nothing throws out of here. Trigger.dev reports an uncaught throw with no message.
  */
 export async function runAgentTurn(
   deps: AgentTurnDeps,
@@ -190,8 +176,7 @@ export async function runAgentTurn(
           }
 
           case "error":
-            // The SDK surfaces a mid-stream failure as a part, not a rejection, so an unhandled
-            // one would end the loop as if the model had simply stopped talking.
+            // A mid-stream failure arrives as a part, not a rejection.
             deps.log.error({ err: part.error, runId }, "model stream errored");
             throw new AppError("INTERNAL", "The model stopped responding partway through.");
         }
@@ -218,9 +203,7 @@ export async function runAgentTurn(
 
         await deps.setMetadata({ phase: "waiting", phaseStartedAt: deps.now() });
 
-        // Trigger.dev batches metadata writes, so an unflushed `waiting` phase may not have left
-        // the machine when the run suspends. A client reloading during the wait would then render
-        // no approval card against a run that sits for the full waitpoint timeout.
+        // Metadata writes are batched: unflushed, a client reloading mid-wait sees no approval card.
         await deps.flushMetadata();
 
         const resolution = await deps.suspendOn(pending);

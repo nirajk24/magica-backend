@@ -111,7 +111,8 @@ magica-backend/
 │   ├── lib/
 │   │   ├── env.ts                     Phase 0 — Zod over process.env, throws at boot
 │   │   ├── db.ts                      Phase 0 — PrismaClient + adapter-pg singleton, max:5
-│   │   ├── api.ts                     Phase 0 — defineRoute()
+│   │   ├── api.ts                     Phase 0 — defineRoute(), definePublicRoute()
+│   │   ├── users.ts                   Phase 0 — ensureUserWithGrant(), the account bootstrap
 │   │   ├── logger.ts                  Phase 0 — pino wrapper, six-key child logger
 │   │   ├── credits/index.ts           Phase 1 — the ONLY writer of ledger + balance
 │   │   └── skills/                    Phase 3 — scan, parse, containment check, cache
@@ -132,6 +133,7 @@ magica-backend/
 │   ├── trigger/
 │   │   ├── agent-turn.ts              Phase 1 — 3-line task shell
 │   │   ├── run-agent-turn.ts          Phase 1 — ★ the loop, plain fn with injected deps
+│   │   ├── turn-state.ts              Phase 1 — block accumulator: segments + stream offsets
 │   │   ├── magica-node-run.ts         Phase 1 — typed child task (poll loop)
 │   │   └── streams.ts                 Phase 1 — streams.define
 │   └── prompts/system.ts              Phase 1 (base) → Phase 3 (+ skill index)
@@ -161,7 +163,6 @@ export const ContentBlock = z.discriminatedUnion("type", [
   z.object({ ...base, type: z.literal("text"),      text: z.string() }),
   z.object({ ...base, type: z.literal("thinking"),  thinking: z.string(),
                                                     durationMs: z.number().optional() }),
-  z.object({ ...base, type: z.literal("reasoning"), reasoning: z.string() }),
   z.object({ ...base, type: z.literal("tool_use"),  id: z.string(), name: z.string(),
                                                     input: z.unknown() }),
   z.object({ ...base, type: z.literal("tool_result"), toolUseId: z.string(),
@@ -185,7 +186,7 @@ export const BlockProjection = z.object({
   type:      z.string(),
   toolUseId: z.string().optional(),
   name:      z.string().optional(),
-  chars:     z.number().optional(),   // EXACT character count of a CLOSED text/thinking block.
+  chars:     z.number().optional(),   // stream characters consumed by a CLOSED text block.
                                        // This is how the FE slices one flat text stream across
                                        // several text blocks — see the rule below.
   streaming: z.boolean().optional(),   // set on the ONE block currently being written
@@ -205,7 +206,7 @@ stream: "Sure, I'll generate that…<180 chars>…Here is the result so far"
                                    ▲
         block[0] takes [0, 180)     └─ block[2] takes [180, end) because it is `streaming`
 
-offset(n) = Σ chars of all preceding text/thinking blocks
+offset(n) = Σ chars of all preceding blocks  (only text blocks consume the stream)
 ```
 
 Two invariants make it safe:
@@ -528,19 +529,32 @@ export function defineRoute<TBody = undefined, TQuery = undefined, TOut = unknow
 
       await ensureUserWithGrant(userId);        // idempotent — kills the webhook-ordering trap
 
-      const body  = opts.body  ? opts.body.parse(await req.json()) : undefined;
-      const query = opts.query ? opts.query.parse(
-                      Object.fromEntries(new URL(req.url).searchParams)) : undefined;
+      const body  = opts.body  ? await parseBody(req, opts.body) : undefined;
+      const query = opts.query ? parseQuery(req, opts.query)        : undefined;
 
       const data = await opts.handler({ userId, body, query,
                                         params: await params, log, traceId });
-      return Response.json({ data });
+      return respond({ data }, 200);          // CORS + BigInt→string, one place
     } catch (e) {
       return mapError(e, traceId, log);         // ZodError→400, AppError→its code, else 500
     }
   };
 }
 ```
+
+`parseBody` exists because a body that is not JSON at all throws a `SyntaxError`, which is neither
+an `AppError` nor a `ZodError` — an unguarded `req.json()` reports a client typo as a 500. `respond`
+serializes BigInt to a string for the same class of reason: `JSON.stringify` throws on one, so a
+service that forgets to convert would take the route down instead of emitting the documented wire
+value. `definePublicRoute` is the same pipeline without `auth()`, for the health probe — a route
+that assembles its own `Response` gets no CORS headers, and the browser then drops a 200 it asked
+for.
+
+`ensureUserWithGrant` (`lib/users.ts`) is deliberately not one transaction: a transaction blocking
+on the row's unique index holds a pool connection for the whole wait, and only the ledger write
+needs atomicity. Its idempotency check is `hasSignupGrant`, not the presence of a `User` row — a row
+created by any other path is still ungranted, and a crash between the two writes then repairs itself
+instead of leaving an account stuck at zero.
 
 `ensureUserWithGrant` is why the Clerk webhook is a *bonus* and not a blocker: the first
 authenticated request creates the user row and grants signup credits, keyed `grant:{userId}`.
@@ -679,8 +693,8 @@ highest-risk logic — the cheapest place to be wrong.
 1  lib/credits              + unit test asserting balance === SUM(ledger)   DONE
 2  tools/{define,registry}, gpt_image_2, magica-client (against MSW)        DONE
 3  trigger/magica-node-run  + the resume-not-resubmit test                  DONE
-4  trigger/run-agent-turn   with fake deps → block order + segment increment tests   <-- NEXT
-5  trigger/agent-turn shell + streams                        ← first real agent run
+4  trigger/{turn-state,run-agent-turn}  with fake deps → block order + segment tests   DONE
+5  trigger/agent-turn shell + streams + tools/to-ai-sdk      <-- NEXT (first real agent run)
 6  services + POST send + GET chat + GET active-run + GET chats + GET credits
 7  frontend (see its LLD Phase 1)
 ```
@@ -698,7 +712,7 @@ src/app/api/v1/credits/route.ts                  (GET — moved from Phase 2: th
                                                   ledger invariant, and that is far easier to eyeball
                                                   over REST than in psql. One thin route.)
 src/tools/{define,registry,to-ai-sdk,magica-client,gpt-image-2}.ts
-src/trigger/{streams,magica-node-run,run-agent-turn,agent-turn}.ts
+src/trigger/{streams,magica-node-run,turn-state,run-agent-turn,agent-turn}.ts
 src/prompts/system.ts
 src/services/{chat,message,run}.service.ts
 src/app/api/v1/chats/[id]/messages/route.ts      (POST — send)
@@ -976,9 +990,46 @@ export async function runAgentTurn(deps: Deps, { runId }: { runId: string }) {
 }
 ```
 
-The `deps` seam is what makes this testable: `bootstrap`, `agentText`, `metadata`, `persistBlocks`,
-`suspendOn`, `finalize` are all injected. Unit tests pass fakes and assert block order, segment
-increments and credit calls **without Trigger.dev, without Postgres, without OpenRouter**.
+The `deps` seam is what makes this testable: `bootstrap`, `startStream`, `appendText`,
+`setMetadata`, `flushMetadata`, `persistBlocks`, `suspendOn`, `recordResolution`, `finalize` and
+`finalizeFailed` are all injected. Unit tests pass fakes and assert block order, segment increments
+and which finalize ran **without Trigger.dev, without Postgres, without OpenRouter**.
+
+**BUILT (session 7), with three changes from the sketch above.**
+
+`startStream` is injected and yields a narrow `TurnStreamPart` union — the adapter that wraps
+`streamText` maps the SDK's parts onto it and drops the rest, so provider and SDK naming churn lives
+in one file instead of in the loop, and the loop needs no network to test.
+
+**Nothing throws out of `runAgentTurn`.** It returns `{ status, turns, segments, reason? }` and
+converts every failure through `finalizeFailed`, because Trigger.dev reports an uncaught throw as
+`TASK_RUN_UNCAUGHT_EXCEPTION` with no message and no stack. `AppError`/`ToolError` messages are
+user-safe and pass through; anything else becomes one generic sentence, so provider text cannot reach
+a client. Exactly one of `finalize`/`finalizeFailed` runs on every path — both refund the admission
+hold, so an escaping error would leave it charged forever.
+
+`metadata.flush()` sits in the loop immediately before `suspendOn` rather than inside it, so the
+ordering is visible where the decision is made and assertable at this layer.
+
+#### 4.1.5a `trigger/turn-state.ts` — the two rules that are easy to get wrong
+
+Extracted so the block accumulator is testable without the loop. It owns exactly two rules.
+
+**Segments.** A closed `text` block ends a step group; reasoning rows and tool rows are counted
+*inside* a group. Implemented as a queued break applied by the next block rather than an eager
+`segment++`, which is what stops a turn ending on text from opening a group nothing will ever fill.
+Two bugs fell out of testing it: `segments()` counted the queued break, so a plain text answer
+reported two groups; and the `usage` footer took the break, rendering a step group whose only row was
+a token count. `usage` now joins the current group and never consumes a break.
+
+**Stream offsets.** Only `text` blocks consume the agent-text stream, so only they carry `chars`.
+The earlier rule summed `chars` over "text and thinking" blocks — but reasoning travels as
+`RunMetadata.reasoningText` and is persisted as a `thinking` block, never appended to the stream
+(decision #50), so counting it would offset every following text block by the length of the thinking
+transcript and render garbled prose. Corrected in the contract and here.
+
+`projection()` is bounded to the newest 60 rows because `RunMetadata.blocks` caps at 60 and a
+rejected snapshot would take the whole turn down; the complete timeline is read back over REST.
 
 #### 4.1.6 The orchestration wrapper (in `to-ai-sdk.ts`)
 
@@ -1017,7 +1068,8 @@ action closes the window.
 **Tests**
 | Kind | Test |
 |---|---|
-| unit | `runAgentTurn` with fakes: block order, `segment` increments on text→tool, MAX_TURNS cap |
+| unit | `runAgentTurn` with fakes: block order, `segment` increments on text→tool, MAX_TURNS cap, empty-stream retry, usage all-or-nothing, flush-before-suspend, no throw escapes |
+| unit | `turn-state`: segment breaks, stream offsets, reasoning never on the stream, 60-block cap |
 | unit | credits: reserve→charge→refund invariant; double-charge is a no-op; negative balance impossible |
 | unit | `magica-client`: 202/401/403/429/timeout/FAILED mapping |
 | integration | send route: happy path, 409 on active run, 400 on bad model, 402 on no credits |
@@ -1147,6 +1199,13 @@ Target: **~15 unit · ~8 integration · 3 acceptance · 2 E2E.** Not a coverage 
 | integration | real Postgres + **MSW** | `onUnhandledRequest: "error"` — a real network call in CI is a failing test |
 | acceptance | real Magica + real OpenRouter | env-gated, **run ONCE**, Day 3 morning. ~10 of the 50 daily requests |
 | E2E | Playwright | one happy path. Reload-recovery is a recorded manual check |
+
+**Two suites guard things that are invisible until they break.** `tests/integration/api.test.ts`
+covers the request boundary — 401, malformed JSON, schema failure, an `AppError` keeping its status,
+an unexpected throw leaking nothing, CORS on both a success and an error, a BigInt on the wire, and
+the account bootstrap under three racing callers. `tests/integration/schema.test.ts` asserts the
+hand-written indexes still exist, because `migrate dev` has already reverted them once and a missing
+partial unique index is a correctness bug, not a slow query.
 
 **MSW handlers are GENERATED from the contracts, not hand-authored (dry-run F15).** Hand-written
 handlers drift from the Zod schemas, and at that point integration tests pass against a fiction.

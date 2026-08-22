@@ -10,7 +10,6 @@ export const ContentBlock = z.discriminatedUnion("type", [
     thinking: z.string(),
     durationMs: z.number().optional(),
   }),
-  z.object({ ...base, type: z.literal("reasoning"), reasoning: z.string() }),
   z.object({
     ...base,
     type: z.literal("tool_use"),
@@ -49,10 +48,14 @@ export type BlockType = ContentBlock["type"];
 /**
  * Realtime projection of ContentBlock: structure without prose.
  *
- * `chars` is an exact character count and is written only when a block closes, so a closed
- * block's slice of the text stream never moves. At most one block carries `streaming: true`
- * and it takes the remainder of the stream. Live text offset for block n is the sum of
- * `chars` over all preceding text and thinking blocks.
+ * `chars` counts the characters a block consumed from the agent-text stream, and is written only
+ * when the block closes, so a closed block's slice never moves. Live text offset for block n is the
+ * sum of `chars` over all preceding blocks; at most one block carries `streaming: true` and it takes
+ * the remainder of the stream.
+ *
+ * INVARIANT: only `text` blocks consume the stream, so only they carry `chars`. Reasoning travels as
+ * `RunMetadata.reasoningText` and is persisted as a `thinking` block — counting it here would offset
+ * every following text block by the length of the thinking transcript.
  */
 export const BlockProjection = z.object({
   segment: z.number().int(),

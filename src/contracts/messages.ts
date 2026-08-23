@@ -23,15 +23,21 @@ export const AssetDTO = z.object({
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
+export const AttachmentSource = z.enum(["uploaded", "generated"]);
+
 export const AttachmentDTO = z.object({
   id: z.string(),
   type: MediaType,
+  source: AttachmentSource,
   url: z.string().url().nullable(),
   name: z.string(),
   contentType: z.string(),
   size: z.number(),
   status: z.enum(["uploading", "ready", "failed", "cancelled"]),
   metadata: z.record(z.string(), z.unknown()).nullable(),
+  /** Transloadit temporary results purge after 24h on the Community plan; the UI renders expiry. */
+  expiresAt: z.string().nullable(),
+  createdAt: z.string(),
 });
 
 export const ToolInvocationDTO = z.object({
@@ -83,6 +89,7 @@ export const ChatDTO = z.object({
 });
 
 export type AssetDTO = z.infer<typeof AssetDTO>;
+export type AttachmentSource = z.infer<typeof AttachmentSource>;
 export type AttachmentDTO = z.infer<typeof AttachmentDTO>;
 export type ToolInvocationDTO = z.infer<typeof ToolInvocationDTO>;
 export type MessageDTO = z.infer<typeof MessageDTO>;

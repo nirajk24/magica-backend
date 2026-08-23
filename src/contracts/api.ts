@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ChatDTO, MessageDTO } from "@/contracts/messages";
+import { AttachmentDTO, AttachmentSource, ChatDTO, MessageDTO } from "@/contracts/messages";
 
 export const ErrorCode = z.enum([
   "UNAUTHENTICATED",
@@ -331,6 +331,69 @@ export const UsagePage = z.object({
   categories: z.array(UsageCategory),
 });
 
+/** Media MIME types only — the PDF scopes uploads to image, video and audio attachments. */
+export const UploadContentType = z
+  .string()
+  .max(120)
+  .regex(/^(image|video|audio)\/[\w.+-]+$/);
+
+export const UploadFileSpec = z.object({
+  name: z.string().min(1).max(200),
+  contentType: UploadContentType,
+  size: z.number().int().min(1),
+});
+
+export const SignUploads = z.object({
+  files: z.array(UploadFileSpec).min(1).max(5),
+});
+
+/**
+ * One signed Transloadit assembly per requested file, in request order. `params` is the exact JSON
+ * string that was signed — the client must send it verbatim or the signature no longer matches.
+ */
+export const SignUploadsResult = z.object({
+  assemblies: z.array(z.object({ params: z.string(), signature: z.string() })),
+  expiresAt: z.string(),
+});
+
+/**
+ * Assembly completion, reported by the client that ran the upload. Upserted on the unique
+ * `assemblyId`, so a duplicate report (retry, reconnect) updates the same row instead of failing.
+ */
+export const CreateAttachment = z
+  .object({
+    assemblyId: z.string().min(1).max(191),
+    status: z.enum(["uploading", "ready", "failed", "cancelled"]),
+    file: z.object({
+      name: z.string().min(1).max(200),
+      contentType: UploadContentType,
+      size: z.number().int().min(1),
+      url: z.string().url().max(2000).optional(),
+      metadata: z.record(z.string(), z.unknown()).optional(),
+    }),
+  })
+  .refine((a) => a.status !== "ready" || a.file.url !== undefined, {
+    message: "A ready attachment must carry its result URL.",
+    path: ["file", "url"],
+  });
+
+export const AttachmentsQuery = z.object({
+  cursor: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+  source: AttachmentSource.optional(),
+  chatId: z.string().optional(),
+});
+
+export const AttachmentsPage = z.object({
+  attachments: z.array(AttachmentDTO),
+  nextCursor: z.string().nullable(),
+});
+
+export const UpdateAttachment = z.object({ name: z.string().min(1).max(200) });
+
+/** What a mutation on one attachment answers with: the row as it now stands. */
+export const AttachmentResponse = z.object({ attachment: AttachmentDTO });
+
 /** Microcredits as a decimal string, like every other credit value on the wire. */
 export const TopUp = z.object({ amount: z.string().regex(/^[1-9]\d*$/) });
 
@@ -360,6 +423,14 @@ export type CreditsPage = z.infer<typeof CreditsPage>;
 export type LlmStatus = z.infer<typeof LlmStatus>;
 export type TopUp = z.infer<typeof TopUp>;
 export type TopUpResult = z.infer<typeof TopUpResult>;
+export type UploadFileSpec = z.infer<typeof UploadFileSpec>;
+export type SignUploads = z.infer<typeof SignUploads>;
+export type SignUploadsResult = z.infer<typeof SignUploadsResult>;
+export type CreateAttachment = z.infer<typeof CreateAttachment>;
+export type AttachmentsQuery = z.infer<typeof AttachmentsQuery>;
+export type AttachmentsPage = z.infer<typeof AttachmentsPage>;
+export type UpdateAttachment = z.infer<typeof UpdateAttachment>;
+export type AttachmentResponse = z.infer<typeof AttachmentResponse>;
 export type ModelId = z.infer<typeof ModelId>;
 export type Health = z.infer<typeof Health>;
 export type Ok = z.infer<typeof Ok>;

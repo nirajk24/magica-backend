@@ -21,6 +21,13 @@ const EnvShape = z.object({
   MAGICA_API_KEY: z.string().startsWith("gx_"),
   MAGICA_BASE_URL: z.string().url().default("https://inference.magica.com"),
 
+  /**
+   * Optional: every Trigger.dev task parses this whole schema at boot, and uploads are the one
+   * feature these serve. The sign route fails by name when they are absent.
+   */
+  TRANSLOADIT_KEY: z.string().optional(),
+  TRANSLOADIT_SECRET: z.string().optional(),
+
   FRONTEND_URL: z.string().url(),
 
   ADMISSION_CREDITS: z.coerce.bigint().default(500_000n),

@@ -285,6 +285,50 @@ export const LlmStatus = z.object({
   rateLimitedUntil: z.string().nullable(),
 });
 
+export const UsageQuery = z.object({
+  from: z.iso.datetime({ offset: true }).optional(),
+  to: z.iso.datetime({ offset: true }).optional(),
+  category: z.string().max(64).optional(),
+});
+
+/**
+ * Credit spend aggregated for the usage overview, all figures microcredits as strings.
+ *
+ * One category per tool that actually cost something (figures are settled and reconciled actuals,
+ * not estimates), plus one per credit source. `records` is present only for the category the query
+ * named, newest first and bounded — `truncated` says whether the bound bit.
+ */
+export const UsageCategory = z.object({
+  key: z.string(),
+  label: z.string(),
+  kind: z.enum(["tool", "adjustment"]),
+  debited: z.string(),
+  credited: z.string(),
+  count: z.number().int(),
+  latestAt: z.string().nullable(),
+  records: z
+    .array(
+      z.object({
+        id: z.string(),
+        chatId: z.string().nullable(),
+        runId: z.string().nullable(),
+        amount: z.string(),
+        at: z.string(),
+      }),
+    )
+    .optional(),
+  truncated: z.boolean().optional(),
+});
+
+export const UsagePage = z.object({
+  from: z.string(),
+  to: z.string(),
+  totalDebited: z.string(),
+  totalCredited: z.string(),
+  records: z.number().int(),
+  categories: z.array(UsageCategory),
+});
+
 /** Microcredits as a decimal string, like every other credit value on the wire. */
 export const TopUp = z.object({ amount: z.string().regex(/^[1-9]\d*$/) });
 
@@ -307,6 +351,9 @@ export type Question = z.infer<typeof Question>;
 export type QuestionsPayload = z.infer<typeof QuestionsPayload>;
 export type PlanStepStatus = z.infer<typeof PlanStepStatus>;
 export type ActivePlan = z.infer<typeof ActivePlan>;
+export type UsageQuery = z.infer<typeof UsageQuery>;
+export type UsageCategory = z.infer<typeof UsageCategory>;
+export type UsagePage = z.infer<typeof UsagePage>;
 export type CreditsPage = z.infer<typeof CreditsPage>;
 export type LlmStatus = z.infer<typeof LlmStatus>;
 export type TopUp = z.infer<typeof TopUp>;

@@ -19,6 +19,10 @@ export default defineConfig({
           name: "unit",
           include: ["tests/unit/**/*.test.ts"],
           environment: "node",
+          // Set before dotenv runs, which does not override existing vars. Pricing assertions read
+          // a tool's default tier, and a developer's `.env` must not be what decides which tier
+          // that is — with `DEMO_MODE=true` locally, two suites fail on a tree that is fine.
+          env: { DEMO_MODE: "false" },
           setupFiles: ["tests/setup/env.ts"],
         },
       },
@@ -29,9 +33,11 @@ export default defineConfig({
           include: ["tests/integration/**/*.test.ts"],
           environment: "node",
           setupFiles: ["tests/setup/env.ts", "tests/msw/setup.ts"],
-          // Set before dotenv runs, which does not override existing vars. Keeps the rate-limit
-          // test to a few round trips instead of eleven.
-          env: { SEND_RATE_PER_MINUTE: "3" },
+          // Set before dotenv runs, which does not override existing vars. `SEND_RATE_PER_MINUTE`
+          // keeps the rate-limit test to a few round trips instead of eleven; `DEMO_MODE` pins the
+          // pricing tier the ledger assertions are written against, which a developer's `.env`
+          // would otherwise decide.
+          env: { SEND_RATE_PER_MINUTE: "3", DEMO_MODE: "false" },
           // Real Neon in us-east-1: ~270ms per round trip from here (measured, decision #46) and
           // several per transaction, so the 5s default fails healthy tests on latency alone.
           testTimeout: 30_000,

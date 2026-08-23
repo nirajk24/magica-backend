@@ -34,6 +34,7 @@ export function bindContext(
     messageId?: string;
     processId?: string;
     waitpointTokenId?: string;
+    deliveryId?: string;
   },
 ): Logger {
   return parent.child(ctx);

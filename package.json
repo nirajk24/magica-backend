@@ -23,7 +23,8 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:reset": "prisma migrate reset --force && pnpm db:seed",
     "trigger:dev": "trigger dev",
-    "trigger:deploy": "trigger deploy"
+    "trigger:deploy": "trigger deploy",
+    "docs:openapi": "tsx scripts/gen-openapi.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

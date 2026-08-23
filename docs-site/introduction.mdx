@@ -1,0 +1,62 @@
+---
+title: Introduction
+description: A REST API for a long-running, tool-using agent.
+---
+
+The Magica Agent Chat API exposes three things: **conversations** with an agent that streams,
+reasons and calls tools; **direct execution** of the Magica media tools; and **webhooks** that tell
+you when a turn or a tool finishes.
+
+## The shape of every response
+
+Success is wrapped in `data`:
+
+```json
+{ "data": { "chatId": "0199…", "runId": "0199…" } }
+```
+
+Failure is an envelope with a stable machine-readable `code` and a `traceId` to quote in a bug
+report:
+
+```json
+{ "error": { "code": "RUN_ALREADY_ACTIVE", "message": "This chat is already working on something.", "traceId": "req_5f0…" } }
+```
+
+## Base URL
+
+```
+https://<your-deployment>/api/public/v1
+```
+
+The version is in the path. A breaking change ships as `v2` beside `v1` rather than altering it.
+
+## One request end to end
+
+```bash
+curl -X POST "$BASE/chats/new/messages" \
+  -H "Authorization: Bearer $MAGICA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"content": "Generate a poster of a mountain at sunrise"}'
+```
+
+```json
+{
+  "data": {
+    "chatId": "0199c3…",
+    "userMessageId": "0199c3…",
+    "runId": "0199c3…",
+    "triggerRunId": "run_06g2…",
+    "publicAccessToken": "pat_…"
+  }
+}
+```
+
+The agent is still working when that response arrives. See
+[Long-running runs](/long-running-runs) for how to follow it.
+
+## What the API does not do
+
+- **It does not stream over HTTP.** Token streaming is a realtime channel the web client
+  subscribes to; the REST surface is request/response and the durable state is the source of truth.
+- **It does not hold a request open for a generation.** Anything that costs provider time is
+  accepted, dispatched durably, and polled.

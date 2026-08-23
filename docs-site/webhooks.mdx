@@ -1,0 +1,86 @@
+---
+title: Webhooks
+description: Signed lifecycle events, and how to verify one.
+---
+
+Register an endpoint under **Settings → Webhooks** and subscribe it to any of four events. The
+signing secret is shown once, when the endpoint is created.
+
+| Event | Fires when |
+|---|---|
+| `agent.started` | a turn begins working |
+| `agent.completed` | a turn finishes successfully |
+| `agent.failed` | a turn ends in failure |
+| `tool.completed` | one tool call finishes successfully |
+
+## The payload
+
+Every event has the same envelope, so a receiver can route on `type` before parsing anything:
+
+```json
+{
+  "id": "evt_0199c3…",
+  "type": "agent.completed",
+  "createdAt": "2026-08-23T12:00:00.000Z",
+  "data": {
+    "runId": "0199c3…",
+    "chatId": "0199c3…",
+    "messageId": "0199c3…",
+    "creditUsed": "5880",
+    "assets": [{ "url": "https://…/poster.png", "type": "image" }]
+  }
+}
+```
+
+## Verifying a delivery
+
+Three headers accompany the body, mirroring the Svix scheme the Magica platform uses:
+
+```
+svix-id: 0199c3…
+svix-timestamp: 1787486400
+svix-signature: v1,BASE64…
+```
+
+Sign `{svix-id}.{svix-timestamp}.{body}` with HMAC-SHA256, keyed by your secret with the
+`whsec_` prefix stripped and the remainder base64url-decoded, then compare in constant time
+against the part after `v1,`.
+
+```ts
+import { createHmac, timingSafeEqual } from "node:crypto";
+
+function verify(secret: string, body: string, headers: Record<string, string>) {
+  const key = Buffer.from(secret.replace("whsec_", ""), "base64url");
+  const signed = `${headers["svix-id"]}.${headers["svix-timestamp"]}.${body}`;
+  const expected = `v1,${createHmac("sha256", key).update(signed).digest("base64")}`;
+
+  const a = Buffer.from(expected);
+  const b = Buffer.from(headers["svix-signature"]);
+
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+```
+
+<Warning>
+Verify against the **raw request body**, before any JSON parsing and re-serialization. Re-encoding
+changes the bytes and the signature will not match.
+</Warning>
+
+The id and the timestamp are inside the signed string, so a captured delivery cannot be replayed
+under a fresh timestamp or swapped onto another event.
+
+## Delivery behaviour
+
+- **Answer `2xx` immediately** and do the work afterwards. Any 2xx counts as success.
+- **Be idempotent.** A retry can deliver the same `id` twice; deduplicate on it.
+- **Retries** are five attempts with exponential backoff, from 2s up to 60s.
+- A delivery already accepted is never sent again, even if the delivering task is retried.
+
+Every attempt is recorded. `GET /api/v1/webhooks/{endpointId}/deliveries` shows each event with
+its status, attempt count and last attempt time — the first place to look when a receiver is not
+seeing what you expect.
+
+<Note>
+A webhook never affects the turn that produced it. If your receiver is down, the agent still
+completes, the credits still settle, and the delivery is simply marked failed.
+</Note>

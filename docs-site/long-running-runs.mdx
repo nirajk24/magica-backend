@@ -1,0 +1,62 @@
+---
+title: Long-running runs
+description: Why the API accepts work and hands you a run id, and how to follow it.
+---
+
+An agent turn calls a model, may call several tools, and can pause to ask you something. A
+generation alone can take a minute. So nothing that costs provider time is done inside the HTTP
+request: the API validates, persists, reserves credits, dispatches a **durable run**, and returns.
+
+This mirrors the Magica platform API itself, which answers `202` with a `runId` and expects you to
+poll.
+
+## Following a turn
+
+```bash
+curl "$BASE/runs/$RUN_ID" -H "Authorization: Bearer $MAGICA_API_KEY"
+```
+
+```json
+{ "data": { "runId": "0199…", "chatId": "0199…", "status": "running", "assistantMessageId": "0199…" } }
+```
+
+| Status | Terminal | Meaning |
+|---|---|---|
+| `queued` | no | dispatched, not yet picked up |
+| `running` | no | the agent is working |
+| `waiting` | no | parked on a question or a plan approval, awaiting an answer |
+| `completed` | yes | finished; read the conversation for the answer |
+| `failed` | yes | ended in failure; `failureReason` is safe to show a user |
+| `cancelled` | yes | stopped by the account holder |
+
+<Tip>
+Poll no faster than once a second, or subscribe to [webhooks](/webhooks) and stop polling
+entirely. `agent.completed` and `agent.failed` carry the same `runId`.
+</Tip>
+
+## Reading the answer
+
+When the run is terminal, `GET /chats/{chatId}` returns the conversation. The assistant message
+carries ordered `contentBlocks` — text, thinking, tool calls, tool results and usage in the order
+they happened — plus `assets` for any media produced and `creditUsed` for what the turn cost.
+
+## Direct tool runs
+
+`POST /tools/{toolName}/run` behaves the same way: it answers with a `runId`, and the output
+appears on `GET /runs/{runId}` as `result` once the tool finishes.
+
+```bash
+curl -X POST "$BASE/tools/crop_image/run" \
+  -H "Authorization: Bearer $MAGICA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"input": {"image_url": "https://…/photo.png", "x_percent": 0, "y_percent": 0, "width_percent": 100, "height_percent": 50}}'
+```
+
+Call `GET /tools` for the exact input schema of each tool. Those schemas are generated from the
+ones the server validates against, so they cannot drift from what is enforced.
+
+## Interruptions are normal, not exceptional
+
+Free-tier models are rate-limited by their own providers, and a turn can fail for reasons outside
+your control. A failed turn keeps everything it produced before failing: partial text, completed
+tool results, and the credits already settled. It is safe to show the user and safe to retry.

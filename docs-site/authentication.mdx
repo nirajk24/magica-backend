@@ -1,0 +1,45 @@
+---
+title: Authentication
+description: Bearer API keys, how they are stored, and what revocation means.
+---
+
+Every request carries a key issued from the app under **Settings → API keys**:
+
+```
+Authorization: Bearer mk_live_…
+```
+
+## How keys are stored
+
+Only a **SHA-256 hash** of the key is written to the database. The plaintext appears exactly once,
+in the response that creates it, and cannot be recovered afterwards — a lost key is replaced, not
+retrieved.
+
+<Note>
+SHA-256 rather than a password hash is deliberate. A work factor exists to slow brute force
+against low-entropy human secrets; these keys carry 192 bits of randomness, so there is nothing to
+brute-force, and a slow hash would tax every authenticated request instead.
+</Note>
+
+A listing shows a `fingerprint` — the first bytes of the **hash**, not of the key. It tells two
+rows apart and reveals nothing about the secret.
+
+## Revocation
+
+Revoking a key marks it revoked rather than deleting it, so an audit trail naming a leaked key
+still resolves. The next request made with it answers `401`, with no grace period.
+
+## What a key can reach
+
+A key acts as the account that created it. Every read and every mutation is scoped to that
+account inside the database query itself — another account's chat, run or file answers `404`, never
+`403`, because a `403` would confirm the id exists.
+
+## Failure modes
+
+| Situation | Response |
+|---|---|
+| No `Authorization` header | `401 UNAUTHENTICATED` |
+| Malformed key, or one not shaped like ours | `401 UNAUTHENTICATED` (no database lookup happens) |
+| Revoked or unknown key | `401 UNAUTHENTICATED` |
+| A browser session cookie instead of a key | `401 UNAUTHENTICATED` — the public API accepts keys only |

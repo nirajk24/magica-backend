@@ -11,6 +11,13 @@ at Phase 1). Read `LLD.md` §0 before adding anything.
 - **Node 20.9+** (`.nvmrc` pins 20.20.2), pnpm. `nvm use` before any command.
 - **Layering is one-directional:** route → service → `lib/db`. A route never touches Prisma;
   a service never imports another service (shared logic moves to `lib/`).
+  One exception, named as such: a **composition service** exists where two routes must run the
+  identical multi-service use case — `message-submit.service.ts` is the app's send route and the
+  public API's submission endpoint, which differ only in how the caller was authenticated.
+  Duplicating that path is the failure this rule exists to prevent, not an instance of it.
+  Authentication primitives the request pipeline itself needs (`lib/api-keys.ts`) live in `lib/`
+  even though they query Postgres, because `lib/api.ts` importing a service would invert the
+  direction every route depends on.
 - **`src/contracts/` is the source of truth** and imports nothing from `src/`. The frontend
   syncs a committed copy — changing a contract is a cross-repo change.
 - **`lib/credits` is the only writer** of `CreditLedgerEntry` and `User.creditBalance`.

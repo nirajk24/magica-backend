@@ -4,6 +4,7 @@ import { validateNodeInput } from "@/tools/catalog-schema";
 import { db } from "@/lib/db";
 import { AppError, ToolError } from "@/lib/errors";
 import type { Logger } from "@/lib/logger";
+import { publishLifecycleEvent } from "@/lib/webhook-emit";
 import { patchActivePlanStep } from "@/services/turn.service";
 import { assetsFromInvocation } from "@/tools/assets";
 import { getTool } from "@/tools/registry";
@@ -202,6 +203,18 @@ export function createToolRuntime(a: {
 
       a.log.info({ invocationId, durationMs }, "tool completed");
       await publish();
+
+      await publishLifecycleEvent({
+        userId: turn.userId,
+        event: "tool.completed",
+        data: {
+          runId: turn.runId,
+          chatId: turn.chatId,
+          invocationId,
+          durationMs,
+          creditUsed: (actualCost ?? 0n).toString(),
+        },
+      });
     },
 
     /** A failed step is free: the pre-execute charge is reversed by the amount recorded. */

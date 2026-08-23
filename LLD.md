@@ -1346,6 +1346,15 @@ Public API (`ApiKey` hashed, versioned `/api/public/v1`), signed webhooks (HMAC-
 `svix-id`/`svix-timestamp`/`svix-signature`, mirroring Magica's own scheme), Mintlify from
 `scripts/gen-openapi.ts`. Tables already exist — **no migration on Day 3.**
 
+**DONE.** `definePublicApiRoute` resolves the caller from a bearer API key and shares everything
+else with `defineRoute`, so the public API is the same API. Seven public routes (chats list/read,
+message submission, run status, tool list, direct tool run, attachments), six management routes
+(keys ×3, webhooks ×3), four signed lifecycle events emitted from `loadTurn` / `finalizeTurn` /
+`completeInvocation` — none inside `run-agent-turn.ts` — delivered by a durable `deliver-webhook`
+task. Direct tool runs execute through the same `createToolRuntime` the agent uses, so they are
+charged, reconciled and exactly-once by construction. `docs-site/` is generated from the contracts;
+`pnpm docs:openapi` regenerates it.
+
 ---
 
 ## 5. Test strategy
@@ -1478,6 +1487,8 @@ from here.
 | `updatedAt: undefined` in a Prisma update meaning "leave it" | it means "not provided", so `@updatedAt` bumps the row anyway — a rename reorders the sidebar, and can skip or repeat a row mid-pagination because `updatedAt` is half the cursor key | read the current value and write it back explicitly |
 | Two `OR` keys in one Prisma filter object | the second silently replaces the first — a cursored search restarts the full result set on every page | wrap each `OR` in its own clause under one `AND` array |
 | A fixed number of `..` hops to a shipped data directory | the bundle puts `agent-skills/` at its root and the compiled task two levels down at `src/trigger/`, so three hops lands outside the bundle entirely — measured, not guessed | search upward from `import.meta.dirname`, bounded, and throw when absent. `findSkillsDir` is extracted so a test can assert the real bundle layout |
+| `z.toJSONSchema` on a schema containing `.transform()` | it THROWS rather than degrading, so one clamped field took down a whole endpoint — and the test read `body.data?.tools ?? []`, which turned the 500 into a plausible empty list | pass `unrepresentable: "any"`, and assert the response status BEFORE reading the body. A `??` fallback over an envelope hides every error as an empty success |
+| `prisma migrate dev` when the diff drops a column | refuses to run non-interactively, so CI and any agent session is blocked | hand-write the migration with its rollback in a comment and apply with `migrate deploy`. Confirm the column's live values first — the warning counts rows, not distinct values |
 | A hand-copied credential one character short | every local gate stays green — signing, tests, typecheck all work on any string — and the live API answers `GET_ACCOUNT_UNKNOWN_AUTH_KEY` | length-check a pasted key against the provider's format when recording it (Transloadit auth keys are 32 hex, secrets 40), and keep one cheap live probe per credential |
 
 ---

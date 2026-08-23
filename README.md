@@ -92,6 +92,32 @@ overwrite a completed turn), then stops the machine and expires tokens best-effo
 recovery never infers liveness from timestamps — it asks Trigger.dev, and treats "the call failed"
 as "still alive".
 
+**Uploads are signed server-side and bounded before they start.** `POST /uploads/sign` returns one
+HMAC-SHA384-signed Transloadit assembly per file, with the instructions inline in the signed string
+so a client cannot alter them and `num_expected_upload_files: 1` so a signature cannot be reused for
+a batch. The Community plan's 0.5 GB per-file and 5 GB monthly limits are enforced *before* anything
+is signed, and monthly usage is counted exactly once, on the transition into `ready`, in the same
+transaction as the attachment row. Completion is upserted on the assembly id, so a duplicate report
+lands on the same row. Results live on Transloadit's temporary storage and expire after 24 hours —
+`Attachment.expiresAt` carries that, and the UI renders it rather than pretending otherwise.
+
+**The public API is the same API.** `definePublicApiRoute` differs from `defineRoute` in exactly one
+thing: the caller comes from a bearer API key instead of a session. Parsing, the response envelope,
+error mapping and every service are shared — message submission is literally one function called by
+both routes — so the public surface cannot drift from the app's own behaviour. Keys are stored as
+SHA-256 (a 192-bit random token has nothing to brute-force, and a password hash's work factor would
+tax every request), returned once, and revoked rather than deleted. A direct tool run is a real run:
+it creates an `AgentRun` and executes through the same charged tool runtime the agent uses, so it is
+priced, reconciled, exactly-once and visible in usage without a second code path.
+
+**Webhooks never affect the turn that produced them.** `agent.started`, `agent.completed`,
+`agent.failed` and `tool.completed` are signed with the same Svix scheme the Magica platform uses.
+Emission writes the delivery row and hands it to a durable task — five attempts with exponential
+backoff, a delivered row never re-sent — and the emit path swallows its own failure by design,
+because a customer's unreachable receiver must not fail a paid turn. `docs-site/` is a Mintlify site
+whose OpenAPI document is generated from these same contracts (`pnpm docs:openapi`), so the
+published reference cannot drift from what the server enforces.
+
 Layering is one-directional — route → service → `lib/db` — and `src/contracts/` imports nothing
 from the rest of the source, which is what makes it safe to copy to the frontend. `CONVENTIONS.md`
 holds the day-to-day rules; `LLD.md` holds the full design with every contract.
@@ -122,4 +148,6 @@ holds the day-to-day rules; `LLD.md` holds the full design with every contract.
   per message so history stays truthful.
 - Per-account LLM availability instead of a shared status row.
 - Contracts published as a versioned package instead of a synced copy.
-- The bonus tier: public API keys, signed webhooks and Mintlify docs — the tables already exist.
+- Assembly results verified server-side against Transloadit before an attachment is trusted, rather
+  than from the uploading client's report.
+- Per-endpoint webhook retry policy and a manual redelivery control.

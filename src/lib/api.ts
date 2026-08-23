@@ -1,5 +1,6 @@
 import { auth } from "@clerk/nextjs/server";
 import { z } from "zod";
+import { bearerApiKey, userIdForApiKey } from "@/lib/api-keys";
 import { AppError, statusFor } from "@/lib/errors";
 import { bindContext, logger, type Logger } from "@/lib/logger";
 import { env } from "@/lib/env";
@@ -128,6 +129,40 @@ export function defineRoute<TBody = undefined, TQuery = undefined, TOut = unknow
     runRoute(async ({ traceId, log }) => {
       const { userId } = await auth();
       if (!userId) throw new AppError("UNAUTHENTICATED", "Sign in to continue.");
+
+      await ensureUserWithGrant(userId);
+
+      return opts.handler({
+        userId,
+        body: opts.body ? await parseBody(req, opts.body) : (undefined as TBody),
+        query: opts.query ? parseQuery(req, opts.query) : (undefined as TQuery),
+        params: (await segment?.params) ?? {},
+        headers: req.headers,
+        traceId,
+        log,
+      });
+    });
+}
+
+/**
+ * `defineRoute` for the public API: the caller is identified by a bearer API key instead of a
+ * Clerk session.
+ *
+ * INVARIANT: this differs from `defineRoute` in exactly one thing — how `userId` is resolved.
+ * Handlers receive the same context and call the same services, so the public API cannot drift
+ * from the app's own behaviour, and no business rule is written twice.
+ */
+export function definePublicApiRoute<TBody = undefined, TQuery = undefined, TOut = unknown>(
+  opts: RouteOptions<TBody, TQuery, TOut>,
+) {
+  return (req: Request, segment?: Segment): Promise<Response> =>
+    runRoute(async ({ traceId, log }) => {
+      const key = bearerApiKey(req.headers);
+      const userId = key ? await userIdForApiKey(key) : null;
+
+      if (!userId) {
+        throw new AppError("UNAUTHENTICATED", "A valid API key is required.");
+      }
 
       await ensureUserWithGrant(userId);
 

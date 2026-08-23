@@ -4,6 +4,7 @@ import { refundAdmission } from "@/lib/credits";
 import { db } from "@/lib/db";
 import { isUniqueViolation, ToolError } from "@/lib/errors";
 import { describeModel } from "@/lib/models";
+import { publishLifecycleEvent } from "@/lib/webhook-emit";
 import type { HistoryMessage } from "@/prompts/system";
 import { assetsFromInvocation } from "@/tools/assets";
 
@@ -117,6 +118,12 @@ export async function loadTurn(runId: string, triggerRunId?: string): Promise<Lo
   await db.agentRun.updateMany({
     where: { id: runId, status: { in: [...WRITABLE] } },
     data: { status: "running", assistantMessageId, ...(triggerRunId ? { triggerRunId } : {}) },
+  });
+
+  await publishLifecycleEvent({
+    userId: run.userId,
+    event: "agent.started",
+    data: { runId, chatId: run.chatId, assistantMessageId, modelId: run.chat.modelId },
   });
 
   return {
@@ -365,7 +372,7 @@ async function finalizeTurn(a: {
 }): Promise<void> {
   const { creditUsed, assets, produced } = await completedWork(a.runId);
 
-  await db.$transaction(async (tx) => {
+  const { chatId } = await db.$transaction(async (tx) => {
     const message = await tx.message.update({
       where: { id: a.messageId },
       data: {
@@ -396,6 +403,21 @@ async function finalizeTurn(a: {
     });
 
     await refundAdmission(tx, { userId: a.userId, runId: a.runId });
+
+    return { chatId: message.chatId };
+  });
+
+  await publishLifecycleEvent({
+    userId: a.userId,
+    event: a.status === "completed" ? "agent.completed" : "agent.failed",
+    data: {
+      runId: a.runId,
+      chatId,
+      messageId: a.messageId,
+      creditUsed: creditUsed.toString(),
+      assets: assets.map((asset) => ({ url: asset.url, type: asset.type })),
+      ...(a.failureReason ? { reason: a.failureReason } : {}),
+    },
   });
 }
 

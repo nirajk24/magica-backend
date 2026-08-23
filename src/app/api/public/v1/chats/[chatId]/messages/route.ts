@@ -1,9 +1,12 @@
 import { SendMessage, type SendMessageResult } from "@/contracts";
-import { defineRoute, preflight } from "@/lib/api";
+import { definePublicApiRoute, preflight } from "@/lib/api";
 import { submitMessage } from "@/services/message-submit.service";
 
-/** THE send route. Its whole implementation is shared with the public API's submission endpoint. */
-export const POST = defineRoute({
+/**
+ * Message submission. `:chatId` accepts `new` to start a conversation, exactly as the app's own
+ * send route does — the two share one implementation, so behaviour cannot diverge.
+ */
+export const POST = definePublicApiRoute({
   body: SendMessage,
   handler: ({ userId, body, params, log }): Promise<SendMessageResult> =>
     submitMessage({ userId, chatId: params.chatId ?? "", body, log }),

@@ -400,6 +400,116 @@ export const UpdateAttachment = z.object({ name: z.string().min(1).max(200) });
 /** What a mutation on one attachment answers with: the row as it now stands. */
 export const AttachmentResponse = z.object({ attachment: AttachmentDTO });
 
+/**
+ * The lifecycle events a webhook endpoint can subscribe to. Names mirror the Magica platform's
+ * own `run.started` / `run.completed` style, so a receiver written against one reads the other.
+ */
+export const WebhookEvent = z.enum([
+  "agent.started",
+  "agent.completed",
+  "agent.failed",
+  "tool.completed",
+]);
+
+export const ApiKeyDTO = z.object({
+  id: z.string(),
+  name: z.string(),
+  /**
+   * A short fingerprint derived from the key's hash — NOT a substring of the key itself. The
+   * plaintext is never stored, so there is no key tail to show; this exists to tell two rows
+   * apart in a list and reveals nothing about the secret.
+   */
+  fingerprint: z.string(),
+  createdAt: z.string(),
+  revokedAt: z.string().nullable(),
+});
+
+export const CreateApiKey = z.object({ name: z.string().min(1).max(100) });
+
+/**
+ * The one and only response carrying the plaintext key. Only its SHA-256 hash is stored, so a
+ * lost key is replaced rather than recovered.
+ */
+export const CreateApiKeyResult = z.object({ apiKey: ApiKeyDTO, key: z.string() });
+
+export const ApiKeysPage = z.object({ apiKeys: z.array(ApiKeyDTO) });
+
+export const WebhookEndpointDTO = z.object({
+  id: z.string(),
+  url: z.string().url(),
+  events: z.array(WebhookEvent),
+  createdAt: z.string(),
+});
+
+export const CreateWebhookEndpoint = z.object({
+  url: z.string().url().max(2000).startsWith("https://"),
+  events: z.array(WebhookEvent).min(1),
+});
+
+/** Carries the signing secret once, on creation, for the same reason an API key does. */
+export const CreateWebhookEndpointResult = z.object({
+  endpoint: WebhookEndpointDTO,
+  secret: z.string(),
+});
+
+export const WebhookEndpointsPage = z.object({ endpoints: z.array(WebhookEndpointDTO) });
+
+export const WebhookDeliveryDTO = z.object({
+  id: z.string(),
+  event: WebhookEvent,
+  status: z.enum(["pending", "delivered", "failed"]),
+  attempts: z.number().int(),
+  lastAttemptAt: z.string().nullable(),
+  createdAt: z.string(),
+});
+
+export const WebhookDeliveriesPage = z.object({ deliveries: z.array(WebhookDeliveryDTO) });
+
+/**
+ * The body of every outbound webhook. `data` is the event-specific object; the envelope is
+ * identical across events so a receiver can route on `type` before parsing anything else.
+ */
+export const WebhookPayload = z.object({
+  id: z.string(),
+  type: WebhookEvent,
+  createdAt: z.string(),
+  data: z.record(z.string(), z.unknown()),
+});
+
+/** A public-API run status: what a caller polls while a turn is still working. */
+export const PublicRunStatus = z.object({
+  runId: z.string(),
+  chatId: z.string(),
+  status: z.enum(["queued", "running", "waiting", "completed", "failed", "cancelled"]),
+  assistantMessageId: z.string().nullable(),
+  failureReason: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+/** One direct Magica tool execution, outside any conversation. */
+export const RunTool = z.object({
+  input: z.record(z.string(), z.unknown()),
+});
+
+export const RunToolResult = z.object({
+  tool: z.string(),
+  subModelId: z.string().nullable(),
+  output: z.unknown(),
+  creditUsed: z.string(),
+  durationMs: z.number(),
+});
+
+export const ToolSpecDTO = z.object({
+  name: z.string(),
+  description: z.string(),
+  tags: z.array(z.string()),
+  /** JSON Schema for the tool's input, generated from the same Zod schema the runtime parses. */
+  inputSchema: z.unknown(),
+});
+
+export const ToolsPage = z.object({ tools: z.array(ToolSpecDTO) });
+
 /** Microcredits as a decimal string, like every other credit value on the wire. */
 export const TopUp = z.object({ amount: z.string().regex(/^[1-9]\d*$/) });
 
@@ -429,6 +539,23 @@ export type CreditsPage = z.infer<typeof CreditsPage>;
 export type LlmStatus = z.infer<typeof LlmStatus>;
 export type TopUp = z.infer<typeof TopUp>;
 export type TopUpResult = z.infer<typeof TopUpResult>;
+export type WebhookEvent = z.infer<typeof WebhookEvent>;
+export type ApiKeyDTO = z.infer<typeof ApiKeyDTO>;
+export type CreateApiKey = z.infer<typeof CreateApiKey>;
+export type CreateApiKeyResult = z.infer<typeof CreateApiKeyResult>;
+export type ApiKeysPage = z.infer<typeof ApiKeysPage>;
+export type WebhookEndpointDTO = z.infer<typeof WebhookEndpointDTO>;
+export type CreateWebhookEndpoint = z.infer<typeof CreateWebhookEndpoint>;
+export type CreateWebhookEndpointResult = z.infer<typeof CreateWebhookEndpointResult>;
+export type WebhookEndpointsPage = z.infer<typeof WebhookEndpointsPage>;
+export type WebhookDeliveryDTO = z.infer<typeof WebhookDeliveryDTO>;
+export type WebhookDeliveriesPage = z.infer<typeof WebhookDeliveriesPage>;
+export type WebhookPayload = z.infer<typeof WebhookPayload>;
+export type PublicRunStatus = z.infer<typeof PublicRunStatus>;
+export type RunTool = z.infer<typeof RunTool>;
+export type RunToolResult = z.infer<typeof RunToolResult>;
+export type ToolSpecDTO = z.infer<typeof ToolSpecDTO>;
+export type ToolsPage = z.infer<typeof ToolsPage>;
 export type UploadFileSpec = z.infer<typeof UploadFileSpec>;
 export type SignUploads = z.infer<typeof SignUploads>;
 export type SignUploadsResult = z.infer<typeof SignUploadsResult>;

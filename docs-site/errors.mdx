@@ -1,0 +1,47 @@
+---
+title: Errors
+description: Every error code, what causes it, and whether retrying helps.
+---
+
+Failures share one envelope:
+
+```json
+{
+  "error": {
+    "code": "INSUFFICIENT_CREDITS",
+    "message": "Not enough credits to start this turn.",
+    "traceId": "req_5f0e…"
+  }
+}
+```
+
+`message` is always safe to show a user — provider text and stack traces never reach it. `traceId`
+appears in the server logs for the same request; quote it in a bug report.
+
+| Code | HTTP | Cause | Retry? |
+|---|---|---|---|
+| `UNAUTHENTICATED` | 401 | Missing, malformed, revoked or unknown API key | Not until the key is fixed |
+| `NOT_FOUND` | 404 | No such resource — or it belongs to another account | No |
+| `VALIDATION_ERROR` | 400 | The body or query failed schema validation; `details` lists the fields | No, fix the request |
+| `RUN_ALREADY_ACTIVE` | 409 | That chat already has a turn in flight | Yes, once the run is terminal |
+| `INSUFFICIENT_CREDITS` | 402 | Not enough credits to admit the turn | After topping up |
+| `LIMIT_EXCEEDED` | 400 | A bound was crossed — for example a plan costing more than the balance | No |
+| `QUOTA_EXCEEDED` | 413 | Upload over the 0.5 GB per-file or 5 GB monthly allowance | No |
+| `WAITPOINT_EXPIRED` | 410 | The question or approval timed out; send a new message to continue | No |
+| `RATE_LIMITED` | 429 | Too many sends; a `Retry-After` header says when | Yes, after the delay |
+| `INTERNAL` | 500 | An unexpected server fault | Yes, with backoff |
+
+## One chat, one active run
+
+A chat runs one turn at a time, enforced by a database constraint rather than application code, so
+two simultaneous sends cannot both win. The second gets `409 RUN_ALREADY_ACTIVE`.
+
+If a previous run genuinely died — a worker crash mid-turn — the next send detects it, releases the
+lock and admits the new turn. Liveness is confirmed with the job runner, never inferred from a
+timestamp: a turn parked on a question for fourteen minutes looks idle and is perfectly healthy.
+
+## Failed turns are not lost turns
+
+A turn that fails keeps its partial output, its completed tool results and its settled credits, and
+the account is refunded the unused admission hold. Read the conversation to show the user exactly
+how far the agent got.

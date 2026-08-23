@@ -427,12 +427,13 @@ Each is a scope decision with a known upgrade path, not an oversight.
   free-model path genuinely is shared, but per-account status is the more correct model.
 - **Upload results live on the transform provider's temporary storage** and expire after 24 hours.
   The expiry is surfaced as state rather than hidden; durable object storage is the upgrade.
-- **Assembly completion is reported by the uploading client** and validated by schema, not against
-  the transform provider. Two things follow, and both are accepted rather than unnoticed: the
-  reported `url` is trusted, so a caller can register any address as their attachment; and the
-  reported `size` is what the monthly quota is decremented by, so under-reporting it stretches the
-  allowance. Neither reaches another account — the row is ownership-checked, and a guessed
-  `assemblyId` answers `NOT_FOUND`. Re-fetching the assembly from Transloadit and taking `url`,
-  `size` and `mime` from *its* response is the hardening step, and it closes both at once.
+- **Assembly completion is reported by the uploading client**, not confirmed with the transform
+  provider. The reported `url` is constrained to the provider's own result host, matched on the
+  parsed hostname, so it cannot name an arbitrary address. What is still taken on trust is `size`,
+  which the monthly quota is decremented by — under-reporting it stretches the allowance, at the
+  account's own expense and within the per-file cap the schema enforces. Neither the row nor the
+  quota is reachable across accounts: the upsert is ownership-checked and a guessed `assemblyId`
+  answers `NOT_FOUND`. Re-fetching the assembly and taking `size` and `mime` from *its* response is
+  the remaining hardening step.
 - **Retries are manual.** Automatic retry replays narrative the user has already seen and re-runs
   paid work, because regenerated tool ids no longer match the persisted rows.

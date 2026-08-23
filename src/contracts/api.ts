@@ -349,6 +349,42 @@ export const UploadFileSpec = z.object({
   size: z.number().int().min(1),
 });
 
+/**
+ * The host an uploaded file is served from. A signed assembly carries no export step, so results
+ * stay on the transform provider's own temporary storage; moving to object storage changes this.
+ */
+const UPLOAD_RESULT_HOST = "transloadit.com";
+
+function servedFromUploadHost(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+
+  return (
+    url.protocol === "https:" &&
+    (url.hostname === UPLOAD_RESULT_HOST || url.hostname.endsWith(`.${UPLOAD_RESULT_HOST}`))
+  );
+}
+
+/**
+ * Where a completed upload may claim to live. Completion is reported by the client, so without
+ * this an arbitrary address could be registered as a user's attachment and fed to the model.
+ *
+ * INVARIANT: matched on the parsed `hostname`, never the raw string. `https://host@evil.com` and
+ * `https://host.evil.com` both contain the host as a substring and are both somewhere else.
+ */
+const UploadResultUrl = z
+  .string()
+  .url()
+  .max(2000)
+  .refine(
+    servedFromUploadHost,
+    `An uploaded file must be served over https from ${UPLOAD_RESULT_HOST}.`,
+  );
+
 export const SignUploads = z.object({
   files: z.array(UploadFileSpec).min(1).max(5),
 });
@@ -374,7 +410,7 @@ export const CreateAttachment = z
       name: z.string().min(1).max(200),
       contentType: UploadContentType,
       size: z.number().int().min(1),
-      url: z.string().url().max(2000).optional(),
+      url: UploadResultUrl.optional(),
       metadata: z.record(z.string(), z.unknown()).optional(),
     }),
   })

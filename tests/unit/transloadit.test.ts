@@ -1,5 +1,6 @@
 import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import { CreateAttachment } from "@/contracts";
 import { signAssembly, usagePeriod } from "@/lib/transloadit";
 
 const KEY = "test-key";
@@ -46,5 +47,37 @@ describe("usagePeriod", () => {
   it("buckets by UTC calendar month", () => {
     expect(usagePeriod(new Date("2026-08-23T18:30:00.000Z"))).toBe("2026-08");
     expect(usagePeriod(new Date("2026-09-01T00:00:00.000Z"))).toBe("2026-09");
+  });
+});
+
+describe("CreateAttachment result url", () => {
+  const report = (url: string) => ({
+    assemblyId: "a1",
+    status: "ready" as const,
+    file: { name: "shot.png", contentType: "image/png", size: 1024, url },
+  });
+
+  const accepts = (url: string) => CreateAttachment.safeParse(report(url)).success;
+
+  it("accepts the provider's own result hosts", () => {
+    expect(accepts("https://tmp.transloadit.com/view/photo.png")).toBe(true);
+    expect(accepts("https://cdn.transloadit.com/fixtures/poster.png")).toBe(true);
+    expect(accepts("https://transloadit.com/x.png")).toBe(true);
+  });
+
+  it("rejects any other origin, however it is dressed up", () => {
+    expect(accepts("https://cdn.evil.com/x.png")).toBe(false);
+    // Userinfo: the real host is `evil.com`, and a substring match would have passed this.
+    expect(accepts("https://tmp.transloadit.com@evil.com/x.png")).toBe(false);
+    // Suffix that merely ends in the host's characters, not in the host.
+    expect(accepts("https://tmp.transloadit.com.evil.com/x.png")).toBe(false);
+    expect(accepts("http://tmp.transloadit.com/x.png")).toBe(false);
+  });
+
+  it("still requires a ready report to carry a url at all", () => {
+    const file = { name: "shot.png", contentType: "image/png", size: 1024 };
+    expect(CreateAttachment.safeParse({ assemblyId: "a1", status: "ready", file }).success).toBe(
+      false,
+    );
   });
 });

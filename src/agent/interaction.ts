@@ -47,15 +47,27 @@ export function priceToolCall({ tool, input }: { tool: string; input: unknown })
  * Builds what a parked client will render, or the answer that makes parking pointless.
  *
  * The tool owns both, through its optional `prepare`; this only supplies the registry access it
- * needs. A tool that declares no `prepare` parks on the model's input unchanged, which is why
- * adding a waitpoint kind stays a registry entry.
+ * needs. A tool that declares no `prepare` parks on the model's input, which is why adding a
+ * waitpoint kind stays a registry entry.
+ *
+ * INVARIANT: the input is parsed against the tool's own schema first. An interaction tool gets no
+ * `execute`, so nothing else on this path validates it — and a payload the client cannot parse
+ * renders no card, leaving the run parked on a question nobody can answer until it times out.
  */
 export function buildInteractionOutcome(a: {
   tool: AgentTool;
   input: unknown;
   balance: bigint;
 }): InteractionOutcome<unknown> {
-  if (!a.tool.prepare) return { payload: a.input };
+  const parsed = a.tool.input.safeParse(a.input);
 
-  return a.tool.prepare(a.input, { price: priceToolCall, balance: a.balance });
+  if (!parsed.success) {
+    throw new ToolError(
+      `the arguments for \`${a.tool.name}\` were rejected — ${describeRejection(parsed.error)}`,
+    );
+  }
+
+  if (!a.tool.prepare) return { payload: parsed.data };
+
+  return a.tool.prepare(parsed.data, { price: priceToolCall, balance: a.balance });
 }

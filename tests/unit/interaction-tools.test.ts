@@ -181,6 +181,35 @@ describe("ask_questions", () => {
     expect(outcome).toEqual({ payload: input });
   });
 
+  /**
+   * An interaction tool gets no `execute`, so the wrapper that validates every other tool's input
+   * never runs. Parking on an unvalidated payload strands the turn: the client cannot parse it, so
+   * it renders no panel, and the question waits for an answer nobody can give.
+   */
+  it("rejects arguments the client would not be able to render", () => {
+    const overlong = {
+      message: "x".repeat(2_001),
+      questions: [{ id: "city", type: "text", prompt: "Which city?" }],
+    };
+
+    expect(() =>
+      buildInteractionOutcome({ tool: askQuestions, input: overlong, balance: 0n }),
+    ).toThrow(/message/);
+  });
+
+  it("parks on a paragraph of preamble, which is what a model actually writes", () => {
+    const input = {
+      message: "To create your poster I need a few details:\n\n".concat("1. Which city?\n".repeat(20)),
+      questions: [{ id: "city", type: "text", prompt: "Which city?" }],
+    };
+
+    const outcome = buildInteractionOutcome({ tool: askQuestions, input, balance: 0n });
+
+    expect(QuestionsPayload.safeParse("payload" in outcome ? outcome.payload : null).success).toBe(
+      true,
+    );
+  });
+
   it("defaults a question to optional, an image to one file, and a select to allowing other", () => {
     const parsed = QuestionsPayload.parse({
       message: "A few things",

@@ -224,9 +224,14 @@ export const Question = z.discriminatedUnion("type", [
   }),
 ]);
 
-/** The `questions` waitpoint payload. Paired with `WaitpointKind.questions`. */
+/**
+ * The `questions` waitpoint payload. Paired with `WaitpointKind.questions`.
+ *
+ * `message` is the model's preamble, not a `prompt`, so it runs to a paragraph rather than a line —
+ * the bound is there to keep the payload small enough to travel in run metadata, and nothing more.
+ */
 export const QuestionsPayload = z.object({
-  message: z.string().max(300),
+  message: z.string().max(2000),
   questions: z.array(Question).min(1).max(8),
 });
 

@@ -1,3 +1,11 @@
+-- Baseline: every enum, table, index and foreign key. `pg_trgm` backs the two GIN indexes that
+-- serve search, so the extension must be creatable by the migration role.
+--
+-- Compatibility: none to hold — this is the first migration, and no code predates it.
+--
+-- Rollback: DROP SCHEMA "public" CASCADE; CREATE SCHEMA "public";
+-- Destructive by definition. There is no partial revert of a baseline.
+
 -- CreateExtension
 CREATE EXTENSION IF NOT EXISTS "pg_trgm";
 

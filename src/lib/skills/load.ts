@@ -26,6 +26,12 @@ export function skillIndex(): { name: string; description: string }[] {
   return [...skills().values()].map(({ name, description }) => ({ name, description }));
 }
 
+/**
+ * Extensions a skill asset may carry. The reader returns `utf8`, so a binary file does not fail —
+ * it succeeds and hands the model mojibake. The allowlist is what turns that into a rejection.
+ */
+const READABLE_EXTENSIONS = [".md", ".txt", ".json", ".yaml", ".yml", ".csv"];
+
 export class SkillAccessError extends Error {
   constructor(message: string) {
     super(message);
@@ -64,6 +70,12 @@ export function readSkillAsset(skill: Skill, relativePath: string): {
 
   if (!stats.isFile()) {
     throw new SkillAccessError(`"${relativePath}" is not a file.`);
+  }
+
+  if (!READABLE_EXTENSIONS.some((extension) => target.toLowerCase().endsWith(extension))) {
+    throw new SkillAccessError(
+      `"${relativePath}" is not a readable format; skill files are ${READABLE_EXTENSIONS.join(", ")}.`,
+    );
   }
 
   if (stats.size > MAX_SKILL_BYTES) {

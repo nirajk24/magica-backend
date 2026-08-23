@@ -250,4 +250,13 @@ describe("5. path traversal", () => {
     expect(() => readSkillAsset(skill(), ".")).toThrow(/not a file/);
     expect(() => readSkillAsset(skill(), "absent.md")).toThrow(/does not exist/);
   });
+
+  /** The reader returns `utf8`, so without the allowlist a binary file succeeds and yields mojibake. */
+  it("refuses a format it cannot return as text, even when the file is there", () => {
+    expect(() => readSkillAsset(skill(), "logo.png")).toThrow(/not a readable format/);
+  });
+
+  it("matches the extension case-insensitively", () => {
+    expect(readSkillAsset(skill(), "guide.MD").content).toContain("still markdown");
+  });
 });

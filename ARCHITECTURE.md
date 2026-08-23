@@ -331,7 +331,10 @@ Every failure has a defined behaviour, a user-safe message and a way forward.
 Two rules underpin the table. **Liveness is never inferred from age** — a run parked on a question
 for fourteen minutes looks stale and is perfectly healthy, so the job runner is asked and a *failed*
 query is treated as "still alive". And **charges for work already started stand**: the provider may
-have done and billed it, so refunding would hand back credits for a real cost.
+have done and billed it, so refunding would hand back credits for a real cost. One case is carved
+out deliberately — a provider that answers with nothing usable at all. The user cannot act on "the
+cropper returned no image", so that cost is absorbed rather than passed on, and the invocation
+refunds in full.
 
 Cancel orders its effects deliberately: our rows flip first (conditionally), then the machine is
 stopped, and only then are parked tokens released. Releasing a token first would wake the task,
@@ -437,3 +440,8 @@ Each is a scope decision with a known upgrade path, not an oversight.
   the remaining hardening step.
 - **Retries are manual.** Automatic retry replays narrative the user has already seen and re-runs
   paid work, because regenerated tool ids no longer match the persisted rows.
+- **Some declared surfaces have no producer yet.** `citations` is a content block with a renderer,
+  and `system` and `tool` are message roles, because the brief names all three — but nothing in this
+  build emits one: no tool returns sources, and the loop carries system text as an instruction
+  rather than a row. They are modelled rather than dropped so that adding a retrieval tool is a tool
+  and a renderer, not a schema migration and a contract resync across both repos.

@@ -74,7 +74,13 @@ export const SendMessage = z.object({
   content: z.string().min(1).max(10_000),
   modelId: ModelId.default(DEFAULT_MODEL_ID),
   planMode: z.boolean().default(false),
-  attachmentIds: z.array(z.string()).max(5).default([]),
+  attachmentIds: z
+    .array(z.string())
+    .max(5)
+    .default([])
+    .refine((ids) => new Set(ids).size === ids.length, {
+      message: "Attachment ids must be unique.",
+    }),
 });
 
 /**

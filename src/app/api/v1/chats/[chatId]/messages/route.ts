@@ -7,6 +7,7 @@ import { AppError, isUniqueViolation } from "@/lib/errors";
 import { uuidv7 } from "@/lib/ids";
 import type { Logger } from "@/lib/logger";
 import { consumeSendAllowance } from "@/lib/rate-limit";
+import { claimMessageAttachments } from "@/services/attachment.service";
 import { createChat, getChatForUser, NEW_CHAT_ID } from "@/services/chat.service";
 import { dispatchTurn, resolveStaleRun } from "@/services/run.service";
 
@@ -21,6 +22,7 @@ type Admission = {
   content: string;
   modelId: string;
   planMode: boolean;
+  attachmentIds: string[];
   userMessageId: string;
   runId: string;
   idempotencyKey: string;
@@ -45,6 +47,13 @@ async function admitRun(a: Admission): Promise<boolean> {
           status: "success",
           content: a.content,
         },
+      });
+
+      await claimMessageAttachments(tx, {
+        userId: a.userId,
+        chatId: a.chatId,
+        messageId: a.userMessageId,
+        attachmentIds: a.attachmentIds,
       });
 
       await tx.agentRun.create({
@@ -130,6 +139,7 @@ export const POST = defineRoute({
         content: body.content,
         modelId: body.modelId,
         planMode: body.planMode,
+        attachmentIds: body.attachmentIds,
         userMessageId,
         runId,
         idempotencyKey,

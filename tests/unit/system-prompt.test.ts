@@ -185,3 +185,41 @@ describe("a turn resuming after an interaction", () => {
     expect(messages.some((m) => m.role === "tool")).toBe(false);
   });
 });
+
+describe("file context on history messages", () => {
+  it("appends a user message's attachments as labelled lines the model can act on", () => {
+    const messages = build({
+      history: [
+        {
+          role: "user",
+          content: "Make this dark mode",
+          files: [{ name: "shot.png", type: "image", url: "https://tmp.transloadit.com/shot.png" }],
+        },
+      ],
+    });
+
+    expect(messages[0]?.content).toBe(
+      "Make this dark mode\n\n[Attached image: shot.png — https://tmp.transloadit.com/shot.png]",
+    );
+  });
+
+  it("labels an assistant message's files as generated, which is what they were", () => {
+    const messages = build({
+      history: [
+        {
+          role: "assistant",
+          content: "Here it is.",
+          files: [{ name: "out.png", type: "image", url: "https://cdn.magica.com/out.png" }],
+        },
+      ],
+    });
+
+    expect(messages[0]?.content).toContain("[Generated image: out.png — https://cdn.magica.com/out.png]");
+  });
+
+  it("leaves a message without files untouched", () => {
+    const messages = build({ history: [{ role: "user", content: "hello" }] });
+
+    expect(messages[0]?.content).toBe("hello");
+  });
+});

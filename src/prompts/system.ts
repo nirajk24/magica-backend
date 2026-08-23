@@ -113,7 +113,22 @@ export function buildSystemPrompt(
 export type HistoryMessage = {
   role: "user" | "assistant";
   content: string;
+  files?: { name: string; type: string; url: string }[];
 };
+
+/**
+ * Appends a message's files as bracketed context lines, so the model can reference an uploaded or
+ * generated file's URL — `gpt-image-2-edit` takes them in `uploadedImages`. These lines exist only
+ * in the model-facing message; the stored content is never rewritten.
+ */
+function withFileContext(message: HistoryMessage): string {
+  if (!message.files || message.files.length === 0) return message.content;
+
+  const label = message.role === "user" ? "Attached" : "Generated";
+  const lines = message.files.map((f) => `[${label} ${f.type}: ${f.name} — ${f.url}]`);
+
+  return `${message.content}\n\n${lines.join("\n")}`;
+}
 
 /** A resolved interaction: the answer that has to go back as the tool's result. */
 export type TurnResolution = {
@@ -166,7 +181,9 @@ export function toModelMessages(a: {
   const messages: ModelMessage[] = [];
 
   for (const message of a.history) {
-    if (message.content !== "") messages.push({ role: message.role, content: message.content });
+    if (message.content !== "") {
+      messages.push({ role: message.role, content: withFileContext(message) });
+    }
   }
 
   const answered = new Set(a.resolutions.map((r) => r.toolUseId));

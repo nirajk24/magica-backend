@@ -398,3 +398,132 @@ describe("failTurn", () => {
     expect(await getBalance(userId), "a failed turn costs nothing but its tools").toBe(START);
   });
 });
+
+describe("generated attachments in the media library", () => {
+  const seedImageInvocation = (runId: string, url: string) =>
+    db.toolInvocation.create({
+      data: {
+        runId,
+        toolUseId: `call_${uuidv7()}`,
+        toolName: "gpt_image_2",
+        status: "completed",
+        input: {},
+        output: { images: [url] },
+        creditUsed: 5_880n,
+      },
+      select: { id: true },
+    });
+
+  it("finalize inserts a ready generated row for each produced file", async () => {
+    const { runId, userId, chatId } = await seedRun();
+    const turn = await loadTurn(runId);
+    const invocation = await seedImageInvocation(runId, "https://cdn.magica.com/gen/sunrise.png");
+
+    await completeTurn({
+      runId,
+      userId,
+      messageId: turn.assistantMessageId,
+      blocks,
+      tokenUsage: null,
+    });
+
+    const rows = await db.attachment.findMany({ where: { userId } });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      source: "generated",
+      status: "ready",
+      chatId,
+      toolInvocationId: invocation.id,
+      type: "image",
+      url: "https://cdn.magica.com/gen/sunrise.png",
+      name: "sunrise.png",
+      contentType: "image/png",
+    });
+  });
+
+  it("a re-run finalize (what a retry does) lists each file once", async () => {
+    const { runId, userId } = await seedRun();
+    const turn = await loadTurn(runId);
+    await seedImageInvocation(runId, "https://cdn.magica.com/gen/one.png");
+
+    const args = { runId, userId, messageId: turn.assistantMessageId, blocks, tokenUsage: null };
+    await completeTurn(args);
+    await completeTurn(args);
+
+    expect(await db.attachment.count({ where: { userId, source: "generated" } })).toBe(1);
+  });
+
+  it("a failed turn still lists what its completed tools produced", async () => {
+    const { runId, userId } = await seedRun();
+    const turn = await loadTurn(runId);
+    await seedImageInvocation(runId, "https://cdn.magica.com/gen/partial.png");
+
+    await failTurn({
+      runId,
+      userId,
+      messageId: turn.assistantMessageId,
+      blocks,
+      reason: "The model is busy right now.",
+    });
+
+    expect(await db.attachment.count({ where: { userId, source: "generated" } })).toBe(1);
+  });
+});
+
+describe("history carries file context", () => {
+  it("threads attachment and asset URLs into the turn's history", async () => {
+    const { runId, chatId } = await seedRun();
+
+    await db.message.create({
+      data: {
+        chatId,
+        role: "user",
+        content: "Darken this",
+        attachments: [
+          {
+            id: "att_1",
+            type: "image",
+            source: "uploaded",
+            url: "https://tmp.transloadit.com/shot.png",
+            name: "shot.png",
+            contentType: "image/png",
+            size: 100,
+            status: "ready",
+            metadata: null,
+            expiresAt: null,
+            createdAt: new Date().toISOString(),
+          },
+        ],
+      },
+    });
+    await db.message.create({
+      data: {
+        chatId,
+        role: "assistant",
+        status: "success",
+        content: "Done.",
+        assets: [
+          {
+            url: "https://cdn.magica.com/gen/dark.png",
+            type: "image",
+            model: "gpt_image_2",
+            creditUsed: "5880",
+            toolCallId: "call_9",
+          },
+        ],
+      },
+    });
+
+    const turn = await loadTurn(runId);
+
+    const userEntry = turn.history.find((m) => m.content === "Darken this");
+    expect(userEntry?.files).toEqual([
+      { name: "shot.png", type: "image", url: "https://tmp.transloadit.com/shot.png" },
+    ]);
+
+    const assistantEntry = turn.history.find((m) => m.content === "Done.");
+    expect(assistantEntry?.files, "cross-turn edits need the generated URL in history").toEqual([
+      { name: "dark.png", type: "image", url: "https://cdn.magica.com/gen/dark.png" },
+    ]);
+  });
+});

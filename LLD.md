@@ -1333,9 +1333,9 @@ Ordered by value per hour. Every item is independent.
 | Order | Item | Why here |
 |---|---|---|
 | 1 | ~~`ask_questions` + resolve payload~~ — **backend done in Phase 4**; the question panel is FE | required (p109) |
-| 2 | Uploads: `/uploads/sign`, `/attachments`, quota | `attachmentIds` already validated; biggest single chunk |
+| 2 | ~~Uploads: `/uploads/sign`, `/attachments`, quota~~ — **DONE**: HMAC-SHA384 signed single-file assemblies (inline instructions, no template), per-file + monthly quota before signing, client-reported completion upserted on `assemblyId`, `attachmentIds` honoured in the send transaction, files threaded into history as model-facing context lines | `attachmentIds` already validated; biggest single chunk |
 | 3 | ~~Step-by-step + `update_step`~~ — **DONE**: `applyResolution` seam on the registry, `update_step` via a ToolCtx callback, step-mode prompt gated on unfinished steps. `run-agent-turn.ts` untouched again | reads/writes `activePlan`; auto mode untouched |
-| 4 | Media library, files-in-task, attachment PATCH/DELETE | routes over an existing table |
+| 4 | ~~Media library, files-in-task, attachment PATCH/DELETE~~ — **DONE**: `GET /attachments ?cursor&source&chatId`, rename, hard delete; finalize now inserts `source='generated'` rows (a §4.2 requirement the code had silently dropped) | routes over an existing table |
 | 5 | ~~`/messages/:id/feedback`, `/llm/status`~~ — both done earlier | one column, one row |
 
 ---
@@ -1478,6 +1478,7 @@ from here.
 | `updatedAt: undefined` in a Prisma update meaning "leave it" | it means "not provided", so `@updatedAt` bumps the row anyway — a rename reorders the sidebar, and can skip or repeat a row mid-pagination because `updatedAt` is half the cursor key | read the current value and write it back explicitly |
 | Two `OR` keys in one Prisma filter object | the second silently replaces the first — a cursored search restarts the full result set on every page | wrap each `OR` in its own clause under one `AND` array |
 | A fixed number of `..` hops to a shipped data directory | the bundle puts `agent-skills/` at its root and the compiled task two levels down at `src/trigger/`, so three hops lands outside the bundle entirely — measured, not guessed | search upward from `import.meta.dirname`, bounded, and throw when absent. `findSkillsDir` is extracted so a test can assert the real bundle layout |
+| A hand-copied credential one character short | every local gate stays green — signing, tests, typecheck all work on any string — and the live API answers `GET_ACCOUNT_UNKNOWN_AUTH_KEY` | length-check a pasted key against the provider's format when recording it (Transloadit auth keys are 32 hex, secrets 40), and keep one cheap live probe per credential |
 
 ---
 
@@ -1498,6 +1499,7 @@ on each send, to reject a mismatch, or to drop the field from the send contract 
 chat-level setting only. Silently ignoring it — the current behaviour — is the one option that is
 clearly wrong.
 
-**`attachmentIds` before uploads exist.** The send contract accepts up to five and the route ignores
-them until Phase 6. Rejecting them with `VALIDATION_ERROR` until the feature lands is more honest than
-accepting and discarding.
+**`attachmentIds` before uploads exist.** RESOLVED in Phase 6: the send route claims them inside the
+admit transaction — owned and `ready` or the whole admission rolls back with a non-leaking NOT_FOUND —
+writes the ordered `MessageAttachment` joins and the frozen snapshot, and the turn threads their URLs
+to the model.

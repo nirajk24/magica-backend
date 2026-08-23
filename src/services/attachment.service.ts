@@ -6,6 +6,7 @@ import type {
   SignUploadsResult,
   UploadFileSpec,
 } from "@/contracts";
+import type { Prisma } from "@/generated/prisma/client";
 import { encodeCursor, decodeCursor } from "@/lib/cursor";
 import { db } from "@/lib/db";
 import { env } from "@/lib/env";
@@ -220,6 +221,54 @@ async function upsertAssemblyRow(a: UpsertArgs): Promise<AttachmentDTO> {
   });
 
   return toAttachmentDTO(row as AttachmentRow);
+}
+
+/**
+ * Binds ready attachments to a user message inside the send transaction: join rows in request
+ * order (the PDF's "preserve attachment order" is the `position` column), the sanitized snapshot
+ * frozen onto `Message.attachments`, and `Attachment.chatId` claimed on first use.
+ *
+ * INVARIANT: every id must exist, belong to the caller and be `ready` — anything else answers
+ * NOT_FOUND without saying which of those it was, so a stranger's id is indistinguishable from a
+ * missing one.
+ */
+export async function claimMessageAttachments(
+  tx: Prisma.TransactionClient,
+  a: { userId: string; chatId: string; messageId: string; attachmentIds: string[] },
+): Promise<void> {
+  if (a.attachmentIds.length === 0) return;
+
+  const rows = await tx.attachment.findMany({
+    where: { id: { in: a.attachmentIds }, userId: a.userId, status: "ready" },
+    select: { ...attachmentSelect, chatId: true },
+  });
+
+  if (rows.length !== a.attachmentIds.length) {
+    throw new AppError("NOT_FOUND", "One or more attachments do not exist or are not ready.");
+  }
+
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const ordered = a.attachmentIds.map((id) => byId.get(id)!);
+
+  await tx.messageAttachment.createMany({
+    data: a.attachmentIds.map((attachmentId, position) => ({
+      messageId: a.messageId,
+      attachmentId,
+      position,
+    })),
+  });
+
+  await tx.attachment.updateMany({
+    where: { id: { in: a.attachmentIds }, chatId: null },
+    data: { chatId: a.chatId },
+  });
+
+  await tx.message.update({
+    where: { id: a.messageId },
+    data: {
+      attachments: ordered.map((row) => toAttachmentDTO(row as AttachmentRow)) as never,
+    },
+  });
 }
 
 /** The media library page: newest first over `(userId, createdAt DESC, id)`. */

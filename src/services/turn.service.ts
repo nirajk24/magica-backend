@@ -1,5 +1,5 @@
 import { Prisma } from "@/generated/prisma/client";
-import { ActivePlan, type AssetDTO, type ContentBlock } from "@/contracts";
+import { ActivePlan, type AssetDTO, type AttachmentDTO, type ContentBlock } from "@/contracts";
 import { refundAdmission } from "@/lib/credits";
 import { db } from "@/lib/db";
 import { isUniqueViolation, ToolError } from "@/lib/errors";
@@ -111,7 +111,7 @@ export async function loadTurn(runId: string, triggerRunId?: string): Promise<Lo
     },
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     take: HISTORY_LIMIT,
-    select: { role: true, content: true },
+    select: { role: true, content: true, attachments: true, assets: true },
   });
 
   await db.agentRun.updateMany({
@@ -126,10 +126,45 @@ export async function loadTurn(runId: string, triggerRunId?: string): Promise<Lo
     planMode: run.planMode,
     activePlan: parseActivePlan(run.chat.activePlan),
     assistantMessageId,
-    history: recent
-      .reverse()
-      .map((m) => ({ role: m.role as HistoryMessage["role"], content: m.content })),
+    history: recent.reverse().map((m) => ({
+      role: m.role as HistoryMessage["role"],
+      content: m.content,
+      files: historyFiles(m),
+    })),
   };
+}
+
+/**
+ * The files a history message carries, as the model needs to see them: user uploads from the
+ * attachments snapshot, generated media from the assets snapshot. This is how a URL from an earlier
+ * turn stays referenceable — "edit that image" only works if the image's URL is in the replayed
+ * history.
+ */
+function historyFiles(m: { attachments: unknown; assets: unknown }): HistoryMessage["files"] {
+  const attachments = (m.attachments as AttachmentDTO[] | null) ?? [];
+  const assets = (m.assets as AssetDTO[] | null) ?? [];
+
+  const files = [
+    ...attachments
+      .filter((attachment) => attachment.url !== null)
+      .map((attachment) => ({
+        name: attachment.name,
+        type: attachment.type,
+        url: attachment.url as string,
+      })),
+    ...assets.map((asset) => ({ name: nameFromUrl(asset.url), type: asset.type, url: asset.url })),
+  ];
+
+  return files.length > 0 ? files : undefined;
+}
+
+function nameFromUrl(url: string): string {
+  try {
+    const base = decodeURIComponent(new URL(url).pathname.split("/").pop() ?? "");
+    return base || "generated-file";
+  } catch {
+    return "generated-file";
+  }
 }
 
 /**
@@ -228,17 +263,87 @@ export async function persistTurnBlocks(a: {
  * Assets are read back rather than accumulated in memory so a resumed attempt persists the same set
  * a fresh one would, and each tool's own registry entry decides what counts as a file.
  */
-async function completedWork(runId: string): Promise<{ creditUsed: bigint; assets: AssetDTO[] }> {
+type ProducedAsset = { invocationId: string; asset: AssetDTO };
+
+async function completedWork(runId: string): Promise<{
+  creditUsed: bigint;
+  assets: AssetDTO[];
+  produced: ProducedAsset[];
+}> {
   const invocations = await db.toolInvocation.findMany({
     where: { runId, status: "completed" },
     orderBy: { createdAt: "asc" },
-    select: { toolName: true, toolUseId: true, output: true, creditUsed: true },
+    select: { id: true, toolName: true, toolUseId: true, output: true, creditUsed: true },
   });
+
+  const produced = invocations.flatMap((invocation) =>
+    assetsFromInvocation(invocation).map((asset) => ({ invocationId: invocation.id, asset })),
+  );
 
   return {
     creditUsed: invocations.reduce((total, invocation) => total + invocation.creditUsed, 0n),
-    assets: invocations.flatMap(assetsFromInvocation),
+    assets: produced.map((p) => p.asset),
+    produced,
   };
+}
+
+const EXTENSION_TYPES: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  webp: "image/webp",
+  gif: "image/gif",
+  mp4: "video/mp4",
+  webm: "video/webm",
+  mov: "video/quicktime",
+  mp3: "audio/mpeg",
+  wav: "audio/wav",
+  ogg: "audio/ogg",
+};
+
+const generatedContentType = (url: string, type: string): string =>
+  EXTENSION_TYPES[nameFromUrl(url).split(".").pop()?.toLowerCase() ?? ""] ?? `${type}/*`;
+
+/**
+ * The media library rows for what this run generated, one per produced file.
+ *
+ * INVARIANT: idempotent by (invocationId, url) — a retried attempt re-reads every completed
+ * invocation of the run, including the previous attempt's, and must not list its files twice.
+ * The check-then-insert is race-free here because a run finalizes at most once per attempt.
+ *
+ * `size` is 0: the provider reports no byte size and the file lives on its CDN, not ours.
+ */
+async function insertGeneratedAttachments(
+  tx: Prisma.TransactionClient,
+  a: { userId: string; chatId: string; produced: ProducedAsset[] },
+): Promise<void> {
+  if (a.produced.length === 0) return;
+
+  const existing = await tx.attachment.findMany({
+    where: {
+      toolInvocationId: { in: [...new Set(a.produced.map((p) => p.invocationId))] },
+      source: "generated",
+    },
+    select: { toolInvocationId: true, url: true },
+  });
+  const seen = new Set(existing.map((row) => `${row.toolInvocationId}|${row.url ?? ""}`));
+
+  const rows = a.produced
+    .filter((p) => !seen.has(`${p.invocationId}|${p.asset.url}`))
+    .map((p) => ({
+      userId: a.userId,
+      source: "generated" as const,
+      chatId: a.chatId,
+      toolInvocationId: p.invocationId,
+      status: "ready" as const,
+      type: p.asset.type,
+      url: p.asset.url,
+      name: nameFromUrl(p.asset.url),
+      contentType: generatedContentType(p.asset.url, p.asset.type),
+      size: 0,
+    }));
+
+  if (rows.length > 0) await tx.attachment.createMany({ data: rows });
 }
 
 /**
@@ -258,10 +363,10 @@ async function finalizeTurn(a: {
   servedModel?: string | null;
   failureReason?: string;
 }): Promise<void> {
-  const { creditUsed, assets } = await completedWork(a.runId);
+  const { creditUsed, assets, produced } = await completedWork(a.runId);
 
   await db.$transaction(async (tx) => {
-    await tx.message.update({
+    const message = await tx.message.update({
       where: { id: a.messageId },
       data: {
         status: a.status === "completed" ? "success" : "failed",
@@ -277,6 +382,12 @@ async function finalizeTurn(a: {
           : undefined,
         errorMessage: a.failureReason ?? null,
       },
+    });
+
+    await insertGeneratedAttachments(tx, {
+      userId: a.userId,
+      chatId: message.chatId,
+      produced,
     });
 
     await tx.agentRun.updateMany({

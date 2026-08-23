@@ -495,3 +495,101 @@ describe("a client reloading while a turn is parked", () => {
     ).toBe("5880");
   });
 });
+
+describe("image answers", () => {
+  const QUESTIONS = {
+    message: "Two things before I spend credits.",
+    questions: [
+      { id: "reference", type: "image", prompt: "A reference photo?", required: false, maxImages: 2 },
+      { id: "mood", type: "text", prompt: "What mood?", required: false },
+    ],
+  };
+
+  const seedReadyAttachment = (userId: string, url: string) =>
+    db.attachment.create({
+      data: {
+        userId,
+        status: "ready",
+        type: "image",
+        url,
+        name: "ref.png",
+        contentType: "image/png",
+        size: 100,
+      },
+      select: { id: true },
+    });
+
+  it("resolves attachment ids to URLs server-side, for the row and the woken task alike", async () => {
+    const seeded = await seedWaitpoint({ kind: "questions", payload: QUESTIONS });
+    const { control, completed } = fakeControl();
+    const attachment = await seedReadyAttachment(seeded.userId, "https://tmp.transloadit.com/ref.png");
+
+    await resolveWaitpoint({
+      userId: seeded.userId,
+      waitpointId: seeded.waitpointId,
+      resolution: {
+        kind: "questions",
+        answers: { reference: attachment.id, mood: "calm" },
+        skipped: [],
+      },
+      log: logger,
+      control,
+    });
+
+    const row = await db.waitpoint.findUniqueOrThrow({ where: { id: seeded.waitpointId } });
+    const stored = row.resolution as { answers: Record<string, unknown> };
+    expect(stored.answers.reference, "ids never survive past resolve time").toBe(
+      "https://tmp.transloadit.com/ref.png",
+    );
+    expect(stored.answers.mood, "non-image answers pass through untouched").toBe("calm");
+    expect(
+      (completed[0]?.resolution as { answers: Record<string, unknown> }).answers.reference,
+    ).toBe("https://tmp.transloadit.com/ref.png");
+  });
+
+  it("resolves a multi-image answer in order", async () => {
+    const seeded = await seedWaitpoint({ kind: "questions", payload: QUESTIONS });
+    const { control } = fakeControl();
+    const first = await seedReadyAttachment(seeded.userId, "https://tmp.transloadit.com/a.png");
+    const second = await seedReadyAttachment(seeded.userId, "https://tmp.transloadit.com/b.png");
+
+    await resolveWaitpoint({
+      userId: seeded.userId,
+      waitpointId: seeded.waitpointId,
+      resolution: {
+        kind: "questions",
+        answers: { reference: [second.id, first.id] },
+        skipped: ["mood"],
+      },
+      log: logger,
+      control,
+    });
+
+    const row = await db.waitpoint.findUniqueOrThrow({ where: { id: seeded.waitpointId } });
+    expect((row.resolution as { answers: Record<string, unknown> }).answers.reference).toEqual([
+      "https://tmp.transloadit.com/b.png",
+      "https://tmp.transloadit.com/a.png",
+    ]);
+  });
+
+  it("answers NOT_FOUND for a stranger's attachment and leaves the waitpoint pending", async () => {
+    const seeded = await seedWaitpoint({ kind: "questions", payload: QUESTIONS });
+    const stranger = await seedWaitpoint();
+    const { control, completed } = fakeControl();
+    const foreign = await seedReadyAttachment(stranger.userId, "https://tmp.transloadit.com/x.png");
+
+    await expect(
+      resolveWaitpoint({
+        userId: seeded.userId,
+        waitpointId: seeded.waitpointId,
+        resolution: { kind: "questions", answers: { reference: foreign.id }, skipped: [] },
+        log: logger,
+        control,
+      }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+
+    const row = await db.waitpoint.findUniqueOrThrow({ where: { id: seeded.waitpointId } });
+    expect(row.status, "a failed resolve must stay answerable").toBe("pending");
+    expect(completed).toHaveLength(0);
+  });
+});

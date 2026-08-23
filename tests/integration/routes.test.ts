@@ -701,3 +701,94 @@ describe("GET /llm/status", () => {
     expect(body.data?.rateLimitedUntil).toBeNull();
   });
 });
+
+describe("send with attachments", () => {
+  const seedAttachment = async (userId: string, over?: { status?: "uploading" | "ready" }) => {
+    await db.user.upsert({
+      where: { id: userId },
+      create: { id: userId, email: `${userId}@test.local` },
+      update: {},
+    });
+
+    return db.attachment.create({
+      data: {
+        userId,
+        status: over?.status ?? "ready",
+        type: "image",
+        url: "https://tmp.transloadit.com/shot.png",
+        name: "shot.png",
+        contentType: "image/png",
+        size: 100,
+      },
+      select: { id: true },
+    });
+  };
+
+  it("binds them to the message in order, snapshots them, and claims them for the chat", async () => {
+    const first = await seedAttachment(clerk.userId!);
+    const second = await seedAttachment(clerk.userId!);
+
+    const res = await post("new", {
+      content: "Merge these",
+      attachmentIds: [second.id, first.id],
+    });
+    const body = await envelope<{ chatId: string; userMessageId: string }>(res);
+    expect(res.status).toBe(200);
+
+    const joins = await db.messageAttachment.findMany({
+      where: { messageId: body.data!.userMessageId },
+      orderBy: { position: "asc" },
+      select: { attachmentId: true, position: true },
+    });
+    expect(joins, "position preserves the order the user attached in").toEqual([
+      { attachmentId: second.id, position: 0 },
+      { attachmentId: first.id, position: 1 },
+    ]);
+
+    const message = await db.message.findUniqueOrThrow({
+      where: { id: body.data!.userMessageId },
+      select: { attachments: true },
+    });
+    const snapshot = message.attachments as { id: string; url: string }[];
+    expect(snapshot.map((s) => s.id)).toEqual([second.id, first.id]);
+
+    const claimed = await db.attachment.findUniqueOrThrow({ where: { id: first.id } });
+    expect(claimed.chatId, "the files-in-task modal filters on this").toBe(body.data!.chatId);
+  });
+
+  it("rejects a stranger's attachment with NOT_FOUND and admits nothing", async () => {
+    const owner = clerk.userId!;
+    const foreign = await seedAttachment(freshUser());
+
+    clerk.userId = owner;
+    const res = await post("new", { content: "use it", attachmentIds: [foreign.id] });
+    const body = await envelope(res);
+
+    expect(res.status).toBe(404);
+    expect(body.error?.code).toBe("NOT_FOUND");
+    expect(trigger.dispatched, "nothing may dispatch off a rejected send").toEqual([]);
+    expect(
+      await db.message.count({ where: { content: "use it" } }),
+      "the whole admission rolls back",
+    ).toBe(0);
+  });
+
+  it("rejects an attachment that is still uploading", async () => {
+    const pending = await seedAttachment(clerk.userId!, { status: "uploading" });
+
+    const res = await post("new", { content: "too soon", attachmentIds: [pending.id] });
+
+    expect(res.status).toBe(404);
+    expect(trigger.dispatched).toEqual([]);
+  });
+
+  it("rejects duplicate ids at the boundary", async () => {
+    const one = await seedAttachment(clerk.userId!);
+
+    const res = await post("new", { content: "twice", attachmentIds: [one.id, one.id] });
+    const body = await envelope(res);
+
+    expect(res.status).toBe(400);
+    expect(body.error?.code).toBe("VALIDATION_ERROR");
+  });
+});

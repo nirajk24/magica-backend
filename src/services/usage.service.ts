@@ -22,6 +22,37 @@ const toolLabel = (toolName: string) =>
 const later = (a: Date | null, b: Date | null) =>
   a === null ? b : b === null ? a : a > b ? a : b;
 
+type Settlement = { estimated: bigint | null; adjustment: bigint | null };
+
+/**
+ * How each invocation's charge settled: the estimate debited before it ran, and the reconciliation
+ * against what the provider actually reported. Read from the ledger, so the detailed view shows the
+ * same rows the balance is built from.
+ */
+async function settlementsFor(invocationIds: string[]): Promise<Map<string, Settlement>> {
+  if (invocationIds.length === 0) return new Map();
+
+  const entries = await db.creditLedgerEntry.findMany({
+    where: { invocationId: { in: invocationIds } },
+    select: { invocationId: true, amount: true, idempotencyKey: true },
+  });
+
+  const settlements = new Map<string, Settlement>();
+
+  for (const entry of entries) {
+    if (!entry.invocationId) continue;
+    const settlement =
+      settlements.get(entry.invocationId) ?? { estimated: null, adjustment: null };
+
+    if (entry.idempotencyKey.startsWith("charge:")) settlement.estimated = -entry.amount;
+    if (entry.idempotencyKey.startsWith("reconcile:")) settlement.adjustment = -entry.amount;
+
+    settlements.set(entry.invocationId, settlement);
+  }
+
+  return settlements;
+}
+
 type Bucket = {
   key: string;
   label: string;
@@ -140,6 +171,12 @@ export async function summarizeUsage(a: {
     buckets.set(key, entry);
   }
 
+  const named = a.category ? buckets.get(a.category) : undefined;
+  const settlements =
+    named?.kind === "tool"
+      ? await settlementsFor(named.records.map((record) => record.id))
+      : new Map<string, Settlement>();
+
   const categories: UsageCategory[] = [...buckets.values()]
     .sort((x, y) => (y.debited > x.debited ? 1 : y.debited < x.debited ? -1 : 0))
     .map((entry) => ({
@@ -157,6 +194,8 @@ export async function summarizeUsage(a: {
               chatId: record.chatId,
               runId: record.runId,
               amount: record.amount.toString(),
+              estimated: settlements.get(record.id)?.estimated?.toString() ?? null,
+              adjustment: settlements.get(record.id)?.adjustment?.toString() ?? null,
               at: record.at.toISOString(),
             })),
             truncated: entry.truncated,

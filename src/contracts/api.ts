@@ -313,6 +313,8 @@ export const UsageCategory = z.object({
         chatId: z.string().nullable(),
         runId: z.string().nullable(),
         amount: z.string(),
+        estimated: z.string().nullable().optional(),
+        adjustment: z.string().nullable().optional(),
         at: z.string(),
       }),
     )

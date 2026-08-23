@@ -12,7 +12,7 @@ vi.mock("@clerk/nextjs/server", () => ({
 
 const { db } = await import("@/lib/db");
 const { env } = await import("@/lib/env");
-const { topUp } = await import("@/lib/credits");
+const { chargeTool, reconcileToolCharge, topUp } = await import("@/lib/credits");
 const { uuidv7 } = await import("@/lib/ids");
 const { summarizeUsage } = await import("@/services/usage.service");
 const usageRoute = await import("@/app/api/v1/credits/usage/route");
@@ -54,14 +54,21 @@ async function seedSpend() {
         startedAt: new Date(),
         completedAt: new Date(),
       },
+      select: { id: true },
     });
 
-  await invocation("gpt_image_2", 5_880n);
+  const first = await invocation("gpt_image_2", 5_880n);
   await invocation("gpt_image_2", 11_130n);
   await invocation("crop_image", 5_000n);
   await invocation("load_skill", 0n);
 
-  return { userId, chatId, runId };
+  // The first image was estimated at 5,000 and reconciled up to the 5,880 the provider reported.
+  await db.$transaction(async (tx) => {
+    await chargeTool(tx, { userId, invocationId: first.id, runId, amount: 5_000n });
+    await reconcileToolCharge(tx, { userId, invocationId: first.id, runId, actual: 5_880n });
+  });
+
+  return { userId, chatId, runId, reconciledInvocationId: first.id };
 }
 
 afterAll(async () => {
@@ -89,7 +96,13 @@ describe("GET /credits/usage", () => {
           debited: string;
           count: number;
           latestAt: string | null;
-          records?: { chatId: string | null; runId: string | null; amount: string }[];
+          records?: {
+            chatId: string | null;
+            runId: string | null;
+            amount: string;
+            estimated?: string | null;
+            adjustment?: string | null;
+          }[];
         }[];
       };
     };
@@ -107,9 +120,15 @@ describe("GET /credits/usage", () => {
     expect(byKey.signup_grant).toMatchObject({ kind: "adjustment", count: 1 });
     expect(byKey.load_skill, "a free tool is not usage").toBeUndefined();
 
-    expect(byKey.gpt_image_2.records, "only the named category carries records").toHaveLength(2);
-    expect(byKey.gpt_image_2.records?.[0]).toMatchObject({ chatId, runId });
-    expect(byKey.crop_image.records).toBeUndefined();
+    expect(byKey.gpt_image_2?.records, "only the named category carries records").toHaveLength(2);
+    expect(byKey.gpt_image_2?.records?.[0]).toMatchObject({ chatId, runId });
+    expect(byKey.crop_image?.records).toBeUndefined();
+
+    const reconciled = byKey.gpt_image_2?.records?.find((r) => r.amount === "5880");
+    expect(
+      reconciled,
+      "the detailed view shows how the charge settled: estimate, actual, adjustment",
+    ).toMatchObject({ estimated: "5000", adjustment: "880" });
 
     expect(data.categories[0]?.key, "biggest spender first").toBe("gpt_image_2");
   });

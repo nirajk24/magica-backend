@@ -136,7 +136,6 @@ model AgentRun {
   planMode           Boolean          @default(false)
   executionMode      String           @default("auto")
   idempotencyKey     String           @unique
-  turns              Int              @default(0)
   failureReason      String?
   createdAt          DateTime         @default(now()) @db.Timestamptz(3)
   updatedAt          DateTime         @default(now()) @updatedAt @db.Timestamptz(3)

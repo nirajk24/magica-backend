@@ -5,8 +5,7 @@ import { createApiKey, listApiKeys } from "@/services/api-key.service";
 /** Issues a key. The plaintext is in this response and nowhere else, ever again. */
 export const POST = defineRoute({
   body: CreateApiKey,
-  handler: ({ userId, body }): Promise<CreateApiKeyResult> =>
-    createApiKey({ userId, name: body.name }),
+  handler: ({ userId, body }): Promise<CreateApiKeyResult> => createApiKey({ userId, input: body }),
 });
 
 export const GET = defineRoute({

@@ -306,6 +306,9 @@ model ApiKey {
   id        String    @id @default(uuid(7))
   userId    String
   hashedKey String    @unique
+  rateLimitPerMinute Int?
+  rateLimitPerDay    Int?
+  expiresAt DateTime? @db.Timestamptz(3)
   name      String
   createdAt DateTime  @default(now()) @db.Timestamptz(3)
   updatedAt DateTime  @default(now()) @updatedAt @db.Timestamptz(3)

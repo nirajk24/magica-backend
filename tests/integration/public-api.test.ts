@@ -63,16 +63,20 @@ async function envelope<T>(res: Response) {
 }
 
 /** Creates a key through the real session route, so the test uses what a user would. */
-async function issueKey(): Promise<string> {
-  const res = await apiKeysRoute.POST(
+async function issueKeyResponse(body: Record<string, unknown> = { name: "integration" }) {
+  return apiKeysRoute.POST(
     new Request("http://localhost/api/v1/api-keys", {
       method: "POST",
-      body: JSON.stringify({ name: "integration" }),
+      body: JSON.stringify(body),
     }),
     { params: Promise.resolve({}) },
   );
+}
 
+async function issueKey(over: Record<string, unknown> = {}): Promise<string> {
+  const res = await issueKeyResponse({ name: "integration", ...over });
   const body = await envelope<{ key: string; apiKey: { id: string } }>(res);
+
   return body.data!.key;
 }
 
@@ -318,5 +322,114 @@ describe("public API surface", () => {
 
     expect(chat.status, "a 403 would confirm the id exists").toBe(404);
     expect(run.status).toBe(404);
+  });
+});
+
+describe("per-key ceilings", () => {
+  const list = (key: string) =>
+    publicChatsRoute.GET(withKey(key, "http://localhost/api/public/v1/chats"), {
+      params: Promise.resolve({}),
+    });
+
+  it("refuses once the key's own per-minute ceiling is crossed", async () => {
+    const key = await issueKey({ rateLimitPerMinute: 2 });
+
+    expect((await list(key)).status).toBe(200);
+    expect((await list(key)).status).toBe(200);
+
+    const refused = await list(key);
+    const body = await envelope(refused);
+
+    expect(refused.status).toBe(429);
+    expect(body.error?.message).toContain("2 requests per minute");
+    expect(refused.headers.get("Retry-After")).not.toBeNull();
+  });
+
+  it("meters each key separately, so one exhausted credential does not block another", async () => {
+    const limited = await issueKey({ name: "limited", rateLimitPerMinute: 1 });
+    const roomy = await issueKey({ name: "roomy", rateLimitPerMinute: 50 });
+
+    await list(limited);
+    expect((await list(limited)).status, "the limited key is spent").toBe(429);
+    expect((await list(roomy)).status, "the other key is untouched").toBe(200);
+  });
+
+  it("leaves an unlimited key unmetered", async () => {
+    const key = await issueKey();
+
+    for (let i = 0; i < 4; i++) {
+      expect((await list(key)).status).toBe(200);
+    }
+  });
+
+  it("counts the daily ceiling independently of the minute one", async () => {
+    const key = await issueKey({ rateLimitPerMinute: 100, rateLimitPerDay: 2 });
+
+    expect((await list(key)).status).toBe(200);
+    expect((await list(key)).status).toBe(200);
+
+    const refused = await list(key);
+    expect(refused.status).toBe(429);
+    expect((await envelope(refused)).error?.message).toContain("2 requests per day");
+  });
+
+  it("rejects a daily ceiling the per-minute one could never reach", async () => {
+    const res = await issueKeyResponse({
+      name: "impossible",
+      rateLimitPerMinute: 1,
+      rateLimitPerDay: 999_999,
+    });
+
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("expiry", () => {
+  it("stops accepting a key the moment it expires", async () => {
+    const key = await issueKey({ expiresAt: new Date(Date.now() + 60_000).toISOString() });
+    const list = () =>
+      publicChatsRoute.GET(withKey(key, "http://localhost/api/public/v1/chats"), {
+        params: Promise.resolve({}),
+      });
+
+    expect((await list()).status).toBe(200);
+
+    await db.apiKey.updateMany({
+      where: { userId: clerk.userId! },
+      data: { expiresAt: new Date(Date.now() - 1_000) },
+    });
+
+    expect((await list()).status, "an expired key is as dead as a revoked one").toBe(401);
+  });
+
+  it("carries the expiry back on the listing so a client can warn before it lapses", async () => {
+    const expiresAt = new Date(Date.now() + 86_400_000).toISOString();
+    await issueKey({ expiresAt });
+
+    const listed = await envelope<{ apiKeys: { expiresAt: string | null }[] }>(
+      await apiKeysRoute.GET(new Request("http://localhost/api/v1/api-keys"), {
+        params: Promise.resolve({}),
+      }),
+    );
+
+    expect(listed.data?.apiKeys[0]?.expiresAt).toBe(expiresAt);
+  });
+});
+
+describe("the active-key cap", () => {
+  it("refuses an eleventh key, and accepts one again after a revoke", async () => {
+    for (let i = 0; i < 10; i++) await issueKey({ name: `key ${i}` });
+
+    const refused = await issueKeyResponse({ name: "eleventh" });
+    expect(refused.status).toBe(400);
+    expect((await envelope(refused)).error?.code).toBe("LIMIT_EXCEEDED");
+
+    const rows = await db.apiKey.findMany({ where: { userId: clerk.userId! }, take: 1 });
+    await apiKeyRoute.DELETE(
+      new Request(`http://localhost/api/v1/api-keys/${rows[0]!.id}`, { method: "DELETE" }),
+      { params: Promise.resolve({ apiKeyId: rows[0]!.id }) },
+    );
+
+    expect((await issueKeyResponse({ name: "after revoke" })).status).toBe(200);
   });
 });

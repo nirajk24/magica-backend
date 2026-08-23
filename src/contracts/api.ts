@@ -411,6 +411,13 @@ export const WebhookEvent = z.enum([
   "tool.completed",
 ]);
 
+/** Ceilings a key may be given. The day bound is minute × minutes-in-a-day. */
+export const MAX_KEY_PER_MINUTE = 1000;
+export const MINUTES_PER_DAY = 1440;
+
+/** One account may hold this many un-revoked keys at once. */
+export const MAX_ACTIVE_API_KEYS = 10;
+
 export const ApiKeyDTO = z.object({
   id: z.string(),
   name: z.string(),
@@ -420,11 +427,34 @@ export const ApiKeyDTO = z.object({
    * apart in a list and reveals nothing about the secret.
    */
   fingerprint: z.string(),
+  rateLimitPerMinute: z.number().int().nullable(),
+  rateLimitPerDay: z.number().int().nullable(),
+  expiresAt: z.string().nullable(),
   createdAt: z.string(),
   revokedAt: z.string().nullable(),
 });
 
-export const CreateApiKey = z.object({ name: z.string().min(1).max(100) });
+/**
+ * Minting a key. The limits are the caller's to choose and are enforced per key, so a credential
+ * handed to one integration cannot spend the account's whole allowance.
+ */
+export const CreateApiKey = z
+  .object({
+    name: z.string().min(1).max(100),
+    rateLimitPerMinute: z.number().int().min(1).max(MAX_KEY_PER_MINUTE).optional(),
+    rateLimitPerDay: z.number().int().min(1).optional(),
+    expiresAt: z.iso.datetime({ offset: true }).optional(),
+  })
+  .refine(
+    (a) =>
+      a.rateLimitPerDay === undefined ||
+      a.rateLimitPerMinute === undefined ||
+      a.rateLimitPerDay <= a.rateLimitPerMinute * MINUTES_PER_DAY,
+    {
+      message: "The daily limit cannot exceed the per-minute limit sustained for a whole day.",
+      path: ["rateLimitPerDay"],
+    },
+  );
 
 /**
  * The one and only response carrying the plaintext key. Only its SHA-256 hash is stored, so a

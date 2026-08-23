@@ -1,6 +1,7 @@
 import { auth } from "@clerk/nextjs/server";
 import { z } from "zod";
-import { bearerApiKey, userIdForApiKey } from "@/lib/api-keys";
+import { bearerApiKey, resolveApiKey } from "@/lib/api-keys";
+import { consumeApiKeyAllowance } from "@/lib/rate-limit";
 import { AppError, statusFor } from "@/lib/errors";
 import { bindContext, logger, type Logger } from "@/lib/logger";
 import { env } from "@/lib/env";
@@ -158,16 +159,17 @@ export function definePublicApiRoute<TBody = undefined, TQuery = undefined, TOut
   return (req: Request, segment?: Segment): Promise<Response> =>
     runRoute(async ({ traceId, log }) => {
       const key = bearerApiKey(req.headers);
-      const userId = key ? await userIdForApiKey(key) : null;
+      const resolved = key ? await resolveApiKey(key) : null;
 
-      if (!userId) {
+      if (!resolved) {
         throw new AppError("UNAUTHENTICATED", "A valid API key is required.");
       }
 
-      await ensureUserWithGrant(userId);
+      await consumeApiKeyAllowance(resolved);
+      await ensureUserWithGrant(resolved.userId);
 
       return opts.handler({
-        userId,
+        userId: resolved.userId,
         body: opts.body ? await parseBody(req, opts.body) : (undefined as TBody),
         query: opts.query ? parseQuery(req, opts.query) : (undefined as TQuery),
         params: (await segment?.params) ?? {},

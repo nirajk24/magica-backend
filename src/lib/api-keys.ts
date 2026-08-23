@@ -54,24 +54,47 @@ function hashesMatch(a: string, b: string): boolean {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
+export type ResolvedApiKey = {
+  apiKeyId: string;
+  userId: string;
+  perMinute: number | null;
+  perDay: number | null;
+};
+
 /**
- * The user a plaintext API key belongs to, or null.
+ * The account and ceilings a plaintext API key carries, or null.
  *
  * INVARIANT: the lookup is by hash — the plaintext is never stored and never compared as one. A
- * revoked key resolves to null, so revocation takes effect on the very next request.
+ * revoked or expired key resolves to null, so both take effect on the very next request.
  *
  * Lives in `lib/` rather than a service because the request pipeline authenticates with it, and a
  * `lib` module importing a service would invert the layering every other route depends on.
  */
-export async function userIdForApiKey(key: string): Promise<string | null> {
+export async function resolveApiKey(
+  key: string,
+  now: Date = new Date(),
+): Promise<ResolvedApiKey | null> {
   const hashedKey = hashApiKey(key);
 
   const row = await db.apiKey.findFirst({
     where: { hashedKey, revokedAt: null },
-    select: { userId: true, hashedKey: true },
+    select: {
+      id: true,
+      userId: true,
+      hashedKey: true,
+      expiresAt: true,
+      rateLimitPerMinute: true,
+      rateLimitPerDay: true,
+    },
   });
 
   if (!row || !hashesMatch(row.hashedKey, hashedKey)) return null;
+  if (row.expiresAt !== null && row.expiresAt.getTime() <= now.getTime()) return null;
 
-  return row.userId;
+  return {
+    apiKeyId: row.id,
+    userId: row.userId,
+    perMinute: row.rateLimitPerMinute,
+    perDay: row.rateLimitPerDay,
+  };
 }

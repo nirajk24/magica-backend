@@ -21,6 +21,7 @@ function fakeCtx(loaded: string[] = []) {
     reportCost: () => {
       throw new Error("a skill load is free and must not report a cost");
     },
+    updatePlanStep: () => Promise.reject(new Error("no plan in this fake")),
     loadedSkillNames: () => Promise.resolve(loaded),
     recordSkillLoad: (a) => {
       recorded.push(a);

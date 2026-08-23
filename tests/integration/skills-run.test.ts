@@ -37,6 +37,7 @@ function realCtx(a: { userId: string; chatId: string; runId: string }): ToolCtx 
   const runtime = createToolRuntime({
     turn: a,
     publish: () => Promise.resolve(),
+    publishPlan: () => Promise.resolve(),
     log: logger,
   });
 
@@ -45,6 +46,7 @@ function realCtx(a: { userId: string; chatId: string; runId: string }): ToolCtx 
     invocationId: "inv_unused",
     runNode: () => Promise.reject(new Error("not used")),
     reportCost: () => undefined,
+    updatePlanStep: runtime.updatePlanStep,
     loadedSkillNames: runtime.loadedSkillNames,
     recordSkillLoad: runtime.recordSkillLoad,
     log: logger,

@@ -1,5 +1,5 @@
 import { metadata, task, wait } from "@trigger.dev/sdk";
-import type { WaitpointResolution } from "@/contracts";
+import type { ActivePlan, WaitpointResolution } from "@/contracts";
 import { getBalance } from "@/lib/credits";
 import { recordRateLimit } from "@/lib/llm-status";
 import { loadSkillRegistry } from "@/lib/skills/load";
@@ -13,6 +13,8 @@ import {
   markTurnRunning,
   markTurnWaiting,
   persistTurnBlocks,
+  recordExecutionMode,
+  writeActivePlan,
 } from "@/services/turn.service";
 import { closeWaitpoint, openWaitpoint } from "@/services/waitpoint.service";
 import { buildInteractionOutcome } from "@/agent/interaction";
@@ -59,8 +61,23 @@ export const agentTurn = task({
         metadata.set("invocations", invocations);
         return Promise.resolve();
       },
+      publishPlan: (plan) => {
+        if (plan === undefined) metadata.del("activePlan");
+        else metadata.set("activePlan", plan as never);
+        return Promise.resolve();
+      },
       log: turnLog,
     });
+
+    /** The run-level effects a resolved interaction may apply; the tool decides, this persists. */
+    const resolutionFx = {
+      setExecutionMode: (mode: "auto" | "step_by_step") => recordExecutionMode(runId, mode),
+      setActivePlan: async (plan: ActivePlan | null) => {
+        await writeActivePlan(turn.chatId, plan);
+        if (plan === null) metadata.del("activePlan");
+        else metadata.set("activePlan", plan as never);
+      },
+    };
 
     const result = await runAgentTurn(
       {
@@ -74,6 +91,7 @@ export const agentTurn = task({
         startStream: createStreamStarter({
           turn: { userId: turn.userId, chatId: turn.chatId, runId },
           planMode: turn.planMode,
+          activePlan: turn.activePlan,
           runtime,
           onRequest: () => {
             requests++;
@@ -137,6 +155,14 @@ export const agentTurn = task({
               durationMs: Date.now() - startedAt,
               actualCost: null,
             });
+
+            await tool.applyResolution?.(
+              {
+                resolution,
+                payload: "payload" in outcome ? outcome.payload : interaction.input,
+              },
+              resolutionFx,
+            );
 
             return resolution;
           };

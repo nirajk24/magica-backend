@@ -4,6 +4,7 @@ import { validateNodeInput } from "@/tools/catalog-schema";
 import { db } from "@/lib/db";
 import { AppError, ToolError } from "@/lib/errors";
 import type { Logger } from "@/lib/logger";
+import { patchActivePlanStep } from "@/services/turn.service";
 import { assetsFromInvocation } from "@/tools/assets";
 import { getTool } from "@/tools/registry";
 import type { ToolRuntime, TurnContext } from "@/tools/to-ai-sdk";
@@ -77,6 +78,7 @@ async function projectInvocations(runId: string): Promise<Invocations> {
 export function createToolRuntime(a: {
   turn: TurnContext;
   publish: (invocations: Invocations) => Promise<void>;
+  publishPlan: (plan: RunMetadata["activePlan"]) => Promise<void>;
   log: Logger;
   now?: () => number;
 }): ToolRuntime {
@@ -223,6 +225,14 @@ export function createToolRuntime(a: {
 
       a.log.warn({ invocationId, durationMs }, "tool failed");
       await publish();
+    },
+
+    /** The write and the live card move together, so a reload never shows a stale step. */
+    async updatePlanStep(patch) {
+      const plan = await patchActivePlanStep({ chatId: turn.chatId, ...patch });
+      await a.publishPlan(plan as RunMetadata["activePlan"]);
+
+      return plan;
     },
 
     async loadedSkillNames() {

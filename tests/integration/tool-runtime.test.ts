@@ -51,10 +51,15 @@ async function seedRun(a?: { funds?: bigint; status?: "queued" | "cancelled" }) 
  */
 function toolsFor(turn: { userId: string; chatId: string; runId: string }) {
   const published: unknown[][] = [];
+  const publishedPlans: unknown[] = [];
   const runtime = createToolRuntime({
     turn,
     publish: (invocations) => {
       published.push(invocations);
+      return Promise.resolve();
+    },
+    publishPlan: (plan) => {
+      publishedPlans.push(plan);
       return Promise.resolve();
     },
     log: logger,

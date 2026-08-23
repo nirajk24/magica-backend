@@ -1266,10 +1266,14 @@ against a real waitpoint token in dev, not in a deployed task) · reject with fe
 same message ✅ · a double-clicked resolve is a no-op ✅ · expiry clears the overlay and the model
 wraps up ✅ · `LIMIT_EXCEEDED` fires at plan time ✅.
 
-**Deferred on purpose:** `run.executionMode` is not written from the resolution. Nothing reads it
-until step-by-step mode ships in Phase 6, and a column written before it is read is the dead-column
-pattern this repo keeps finding. The model is told what to do with `step_by_step` by `submit_plan`'s
-own description.
+**Step-by-step mode shipped (follow-up to this phase).** `defineTool.applyResolution(resolution,
+payload, fx)` is the registry seam for what a resolution *means*: `submit_plan` writes the run's
+`executionMode` and turns the approved payload into `Chat.activePlan`; the orchestration supplies
+only `setExecutionMode`/`setActivePlan` and never learns what a plan is. `update_step` advances the
+plan through a `ToolCtx.updatePlanStep` callback (write + live-card publish move together), and the
+step-mode prompt section carries the plan's state into every later turn, gated on unfinished steps
+so a finished plan cannot hold a chat in step mode. A new plan replaces the old rather than clearing
+on completion, keeping the finished tracker on screen across reloads.
 
 ---
 
@@ -1330,7 +1334,7 @@ Ordered by value per hour. Every item is independent.
 |---|---|---|
 | 1 | ~~`ask_questions` + resolve payload~~ — **backend done in Phase 4**; the question panel is FE | required (p109) |
 | 2 | Uploads: `/uploads/sign`, `/attachments`, quota | `attachmentIds` already validated; biggest single chunk |
-| 3 | Step-by-step + `update_step` | reads/writes `activePlan`; auto mode untouched |
+| 3 | ~~Step-by-step + `update_step`~~ — **DONE**: `applyResolution` seam on the registry, `update_step` via a ToolCtx callback, step-mode prompt gated on unfinished steps. `run-agent-turn.ts` untouched again | reads/writes `activePlan`; auto mode untouched |
 | 4 | Media library, files-in-task, attachment PATCH/DELETE | routes over an existing table |
 | 5 | ~~`/messages/:id/feedback`, `/llm/status`~~ — both done earlier | one column, one row |
 

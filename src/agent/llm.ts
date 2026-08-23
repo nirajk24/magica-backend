@@ -1,6 +1,6 @@
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { hasToolCall, stepCountIs, streamText, type TextStreamPart, type ToolSet } from "ai";
-import type { ContentBlock } from "@/contracts";
+import type { ActivePlan, ContentBlock } from "@/contracts";
 import { env } from "@/lib/env";
 import { AppError } from "@/lib/errors";
 import type { Logger } from "@/lib/logger";
@@ -101,6 +101,7 @@ function interactionStops() {
 export function createStreamStarter(a: {
   turn: TurnContext;
   planMode: boolean;
+  activePlan: ActivePlan | null;
   runtime: ToolRuntime;
   onRequest: () => void;
   onRateLimited: (a: { modelId: string; retryAfterSeconds?: number }) => Promise<void>;
@@ -132,7 +133,7 @@ export function createStreamStarter(a: {
     const result = streamText({
       model: openrouter.chat(modelId, { reasoning: { enabled: true, effort: "medium" } }),
       // Not a `system` message inside `messages`: the SDK rejects that outright.
-      instructions: buildSystemPrompt({ planMode: a.planMode }),
+      instructions: buildSystemPrompt({ planMode: a.planMode, activePlan: a.activePlan }),
       messages,
       tools,
       stopWhen,

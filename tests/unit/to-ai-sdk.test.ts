@@ -40,6 +40,10 @@ function fakes(opts?: { active?: boolean; chargeError?: unknown }): Fakes {
       f.calls.push("loadedSkillNames");
       return Promise.resolve([]);
     },
+    updatePlanStep: () => {
+      f.calls.push("updatePlanStep");
+      return Promise.reject(new Error("no plan in this fake"));
+    },
     recordSkillLoad: () => {
       f.calls.push("recordSkillLoad");
       return Promise.resolve();

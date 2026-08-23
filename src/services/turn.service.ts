@@ -1,8 +1,8 @@
-import type { Prisma } from "@/generated/prisma/client";
-import type { AssetDTO, ContentBlock } from "@/contracts";
+import { Prisma } from "@/generated/prisma/client";
+import { ActivePlan, type AssetDTO, type ContentBlock } from "@/contracts";
 import { refundAdmission } from "@/lib/credits";
 import { db } from "@/lib/db";
-import { isUniqueViolation } from "@/lib/errors";
+import { isUniqueViolation, ToolError } from "@/lib/errors";
 import { describeModel } from "@/lib/models";
 import type { HistoryMessage } from "@/prompts/system";
 import { assetsFromInvocation } from "@/tools/assets";
@@ -18,9 +18,16 @@ export type LoadedTurn = {
   chatId: string;
   modelId: string;
   planMode: boolean;
+  activePlan: ActivePlan | null;
   assistantMessageId: string;
   history: HistoryMessage[];
 };
+
+/** A row that fails the schema reads as no plan, so a bad write can never wedge a chat. */
+function parseActivePlan(raw: unknown): ActivePlan | null {
+  const parsed = ActivePlan.safeParse(raw);
+  return parsed.success ? parsed.data : null;
+}
 
 /** Prisma's JSON input type cannot express a union carrying `unknown`; the blocks are validated. */
 const asJson = (blocks: ContentBlock[]) => blocks as unknown as Prisma.InputJsonValue;
@@ -85,7 +92,7 @@ export async function loadTurn(runId: string, triggerRunId?: string): Promise<Lo
       userId: true,
       chatId: true,
       planMode: true,
-      chat: { select: { modelId: true } },
+      chat: { select: { modelId: true, activePlan: true } },
     },
   });
 
@@ -117,6 +124,7 @@ export async function loadTurn(runId: string, triggerRunId?: string): Promise<Lo
     chatId: run.chatId,
     modelId: run.chat.modelId,
     planMode: run.planMode,
+    activePlan: parseActivePlan(run.chat.activePlan),
     assistantMessageId,
     history: recent
       .reverse()
@@ -142,6 +150,66 @@ export const markTurnWaiting = (runId: string) => markTurn(runId, "waiting");
 
 /** The interaction is answered and the turn is working again. */
 export const markTurnRunning = (runId: string) => markTurn(runId, "running");
+
+/** How the approved plan runs, from its approval — recorded on the run for diagnosability. */
+export async function recordExecutionMode(
+  runId: string,
+  mode: "auto" | "step_by_step",
+): Promise<void> {
+  await db.agentRun.updateMany({
+    where: { id: runId, status: { in: [...WRITABLE] } },
+    data: { executionMode: mode },
+  });
+}
+
+/**
+ * Replaces the chat's active plan, or clears it with `null`.
+ *
+ * `Prisma.DbNull` on purpose: `undefined` means "leave unchanged" in a Prisma update, and the JSON
+ * literal `null` would make every reader special-case a second kind of empty.
+ */
+export async function writeActivePlan(chatId: string, plan: ActivePlan | null): Promise<void> {
+  await db.chat.update({
+    where: { id: chatId },
+    data: { activePlan: plan === null ? Prisma.DbNull : (plan as Prisma.InputJsonValue) },
+  });
+}
+
+/**
+ * Advances one step of the chat's active plan and returns the plan as it now stands.
+ *
+ * Throws `ToolError`, not `AppError`: the caller is the model, and both failure modes — no active
+ * plan, a key naming no step — are things it can correct or explain.
+ */
+export async function patchActivePlanStep(a: {
+  chatId: string;
+  stepKey: string;
+  status: "in_progress" | "completed" | "failed";
+  note?: string;
+}): Promise<ActivePlan> {
+  const chat = await db.chat.findUniqueOrThrow({
+    where: { id: a.chatId },
+    select: { activePlan: true },
+  });
+
+  const plan = ActivePlan.safeParse(chat.activePlan);
+  if (!plan.success) {
+    throw new ToolError("No plan is active. Submit a plan and get it approved first.");
+  }
+
+  const step = plan.data.steps.find((candidate) => candidate.key === a.stepKey);
+  if (!step) {
+    const keys = plan.data.steps.map((candidate) => candidate.key).join(", ");
+    throw new ToolError(`No step is named "${a.stepKey}". The plan's steps are: ${keys}.`);
+  }
+
+  step.status = a.status;
+  if (a.note !== undefined) step.note = a.note;
+
+  await writeActivePlan(a.chatId, plan.data);
+
+  return plan.data;
+}
 
 /** Writes the blocks closed so far, so a crash loses only the text still streaming. */
 export async function persistTurnBlocks(a: {

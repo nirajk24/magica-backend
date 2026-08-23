@@ -32,6 +32,55 @@ describe("the base prompt", () => {
     );
   });
 
+  it("runs one step at a time while a step-by-step plan has work left", () => {
+    const prompt = buildSystemPrompt({
+      index: [],
+      activePlan: {
+        title: "Poster",
+        executionMode: "step_by_step",
+        steps: [
+          { key: "hero", title: "Generate", estimatedCredits: "5880", status: "completed" },
+          { key: "crop", title: "Crop", estimatedCredits: "5000", status: "pending" },
+        ],
+      },
+    });
+
+    expect(prompt).toMatch(/STEP BY STEP/);
+    expect(prompt).toMatch(/exactly ONE unfinished step/i);
+    expect(prompt).toMatch(/update_step/);
+    expect(prompt, "the model must see each step's state").toMatch(/hero \(completed\)/);
+    expect(prompt).toMatch(/crop \(pending\)/);
+  });
+
+  it("leaves step mode once every step is finished", () => {
+    const prompt = buildSystemPrompt({
+      index: [],
+      activePlan: {
+        title: "Poster",
+        executionMode: "step_by_step",
+        steps: [
+          { key: "hero", title: "Generate", estimatedCredits: "5880", status: "completed" },
+          { key: "crop", title: "Crop", estimatedCredits: "5000", status: "failed" },
+        ],
+      },
+    });
+
+    expect(prompt).toBe(SYSTEM_PROMPT);
+  });
+
+  it("ignores a plan that was approved to run all at once", () => {
+    const prompt = buildSystemPrompt({
+      index: [],
+      activePlan: {
+        title: "Poster",
+        executionMode: "auto",
+        steps: [{ key: "hero", title: "Generate", estimatedCredits: "5880", status: "pending" }],
+      },
+    });
+
+    expect(prompt).toBe(SYSTEM_PROMPT);
+  });
+
   it("asks for a sentence before each tool call, and names more than images", () => {
     expect(SYSTEM_PROMPT).toMatch(/before\s+each\s+tool\s+call/i);
     expect(SYSTEM_PROMPT, "Magica is not image-only").toMatch(/video/i);

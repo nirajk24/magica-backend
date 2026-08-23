@@ -2,7 +2,7 @@ import { tool, type ToolSet } from "ai";
 import { z } from "zod";
 import { AppError, ToolError } from "@/lib/errors";
 import type { Logger } from "@/lib/logger";
-import type { AgentTool, NodeRunRequest } from "@/tools/define";
+import type { AgentTool, NodeRunRequest, ToolCtx } from "@/tools/define";
 
 /** What the model gets back. Failures are data, not throws: a rejected prompt is a normal path. */
 export type ToolOutcome =
@@ -35,6 +35,7 @@ export type ToolRuntime = {
     message: string;
     durationMs: number;
   }) => Promise<void>;
+  updatePlanStep: ToolCtx["updatePlanStep"];
   loadedSkillNames: () => Promise<string[]>;
   recordSkillLoad: (a: {
     skillName: string;
@@ -140,6 +141,7 @@ export function toAiSdkTools(
             reportCost: (microcredits) => {
               actualCost = microcredits;
             },
+            updatePlanStep: runtime.updatePlanStep,
             loadedSkillNames: runtime.loadedSkillNames,
             recordSkillLoad: runtime.recordSkillLoad,
             log: runtime.log,

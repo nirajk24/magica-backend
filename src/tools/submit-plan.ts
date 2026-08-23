@@ -3,6 +3,7 @@ import {
   PlanApprovalPayload,
   PlanApprovalResolution,
   WaitpointExpired,
+  type ActivePlan,
   type PlanStepPayload,
 } from "@/contracts";
 import { AppError, ToolError } from "@/lib/errors";
@@ -112,5 +113,31 @@ export const submitPlan = defineTool({
         estimatedTotal: estimatedTotal.toString(),
       }),
     };
+  },
+
+  applyResolution: async ({ resolution, payload }, fx) => {
+    if (!("approved" in resolution) || !resolution.approved) return;
+
+    const mode = resolution.executionMode ?? "auto";
+    await fx.setExecutionMode(mode);
+
+    if (mode !== "step_by_step") {
+      await fx.setActivePlan(null);
+      return;
+    }
+
+    const plan = PlanApprovalPayload.parse(payload);
+    const active: ActivePlan = {
+      title: plan.title,
+      executionMode: mode,
+      steps: plan.steps.map((step) => ({
+        key: step.key,
+        title: step.title,
+        estimatedCredits: step.estimatedCredits,
+        status: "pending",
+      })),
+    };
+
+    await fx.setActivePlan(active);
   },
 });

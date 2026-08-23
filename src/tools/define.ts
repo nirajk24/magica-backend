@@ -1,6 +1,6 @@
 import type { z } from "zod";
 import type { Logger } from "@/lib/logger";
-import type { AssetDTO, WaitpointKind } from "@/contracts";
+import type { ActivePlan, AssetDTO, WaitpointKind } from "@/contracts";
 
 export type NodeRunRequest = {
   nodeType: string;
@@ -28,6 +28,15 @@ export type ToolCtx = {
   invocationId: string;
   runNode: (request: NodeRunRequest) => Promise<{ output: unknown; creditUsed: bigint }>;
   reportCost: (microcredits: bigint) => void;
+  /**
+   * Advances one step of the chat's active plan and returns the plan as it now stands. Throws a
+   * `ToolError` when no plan is active or the key names no step, so the model can correct itself.
+   */
+  updatePlanStep: (a: {
+    stepKey: string;
+    status: "in_progress" | "completed" | "failed";
+    note?: string;
+  }) => Promise<ActivePlan>;
   /** Distinct skill names this run has already loaded — the per-turn load budget counts these. */
   loadedSkillNames: () => Promise<string[]>;
   /** Idempotent on `(runId, skillName, assetPath)`, which is what makes a repeat load a dedup. */
@@ -63,6 +72,16 @@ export type InteractionCtx = {
  */
 export type InteractionOutcome<R> = { payload: unknown } | { resolution: R };
 
+/**
+ * The run-level effects a resolved interaction may apply, implemented by the orchestration so the
+ * tool that knows what a resolution *means* never touches persistence itself.
+ */
+export type ResolutionFx = {
+  setExecutionMode: (mode: "auto" | "step_by_step") => Promise<void>;
+  /** `null` clears the plan; the prompt and the progress card both read what this writes. */
+  setActivePlan: (plan: ActivePlan | null) => Promise<void>;
+};
+
 export type AgentTool<I extends z.ZodType = z.ZodType, O extends z.ZodType = z.ZodType> = {
   name: string;
   description: string;
@@ -78,6 +97,12 @@ export type AgentTool<I extends z.ZodType = z.ZodType, O extends z.ZodType = z.Z
    * declares one; without it the payload is the model's input unchanged.
    */
   prepare?: (input: z.infer<I>, ctx: InteractionCtx) => InteractionOutcome<z.infer<O>>;
+  /**
+   * What this tool's resolution means for the run — approval setting an execution mode, an
+   * approved plan becoming the chat's active plan. Called once after the resolution settles, with
+   * the payload the user saw. A tool with no run-level effects simply omits it.
+   */
+  applyResolution?: (a: { resolution: z.infer<O>; payload: unknown }, fx: ResolutionFx) => Promise<void>;
   /**
    * Pulls the media out of this tool's own output. Only the tool knows its output shape, so a tool
    * that produces files declares this and nothing in the orchestrator reads `output` directly.

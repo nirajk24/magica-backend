@@ -224,6 +224,32 @@ export const QuestionsPayload = z.object({
   questions: z.array(Question).min(1).max(8),
 });
 
+export const PlanStepStatus = z.enum(["pending", "in_progress", "completed", "failed"]);
+
+/**
+ * The plan a chat is executing step by step: what `Chat.activePlan` holds and the plan-progress
+ * card renders. Written when a plan is approved with `executionMode: "step_by_step"`, advanced by
+ * the `update_step` tool, replaced by the next approved plan.
+ *
+ * `estimatedCredits` carries over from the approved `PlanStepPayload` — server-priced, in
+ * microcredits as a string.
+ */
+export const ActivePlan = z.object({
+  title: z.string(),
+  executionMode: z.enum(["auto", "step_by_step"]),
+  steps: z
+    .array(
+      z.object({
+        key: z.string(),
+        title: z.string(),
+        estimatedCredits: z.string(),
+        status: PlanStepStatus,
+        note: z.string().optional(),
+      }),
+    )
+    .min(1),
+});
+
 export const UpdateChat = z.object({
   title: z.string().min(1).max(200).optional(),
   isFavorite: z.boolean().optional(),
@@ -279,6 +305,8 @@ export type PlanStepPayload = z.infer<typeof PlanStepPayload>;
 export type PlanApprovalPayload = z.infer<typeof PlanApprovalPayload>;
 export type Question = z.infer<typeof Question>;
 export type QuestionsPayload = z.infer<typeof QuestionsPayload>;
+export type PlanStepStatus = z.infer<typeof PlanStepStatus>;
+export type ActivePlan = z.infer<typeof ActivePlan>;
 export type CreditsPage = z.infer<typeof CreditsPage>;
 export type LlmStatus = z.infer<typeof LlmStatus>;
 export type TopUp = z.infer<typeof TopUp>;

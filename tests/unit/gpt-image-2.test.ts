@@ -21,6 +21,7 @@ function fakeCtx() {
       return Promise.resolve({ output: { image_url: [IMAGE] }, creditUsed: 5880n });
     },
     reportCost: () => undefined,
+    updatePlanStep: () => Promise.reject(new Error("no plan in this fake")),
     loadedSkillNames: () => Promise.resolve([]),
     recordSkillLoad: () => Promise.resolve(),
     log: logger,

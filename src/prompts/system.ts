@@ -1,5 +1,5 @@
 import type { ModelMessage } from "ai";
-import type { ContentBlock } from "@/contracts";
+import type { ActivePlan, ContentBlock } from "@/contracts";
 import { skillIndex } from "@/lib/skills/load";
 
 /**
@@ -54,6 +54,34 @@ const PLAN_MODE = `The user turned on plan mode for this message. Call \`submit_
 their approval before any tool that costs credits. Answering a question or loading guidance needs no
 plan.`;
 
+/** True while the plan still has work in it — a finished plan must not keep a chat in step mode. */
+function hasUnfinishedSteps(plan: ActivePlan | null): plan is ActivePlan {
+  return (
+    plan !== null &&
+    plan.executionMode === "step_by_step" &&
+    plan.steps.some((step) => step.status === "pending" || step.status === "in_progress")
+  );
+}
+
+/**
+ * The step-mode contract: exactly one step per turn, progress recorded through `update_step`, and
+ * the check-in that hands control back. The plan's own state rides along so a fresh turn knows what
+ * remains without re-reading the conversation.
+ */
+function stepModeSection(plan: ActivePlan): string {
+  const steps = plan.steps
+    .map((step) => `- ${step.key} (${step.status}): ${step.title}`)
+    .join("\n");
+
+  return `An approved plan is being executed STEP BY STEP. Plan: ${plan.title}
+${steps}
+
+Do exactly ONE unfinished step this turn, in plan order. Call \`update_step\` with that step's key
+and \`in_progress\` before its work, do the work, then call it again with \`completed\` (or
+\`failed\`) and a one-line note. Then summarise what happened and ask whether to continue — do NOT
+start the next step. When every step is finished, say so and wrap up.`;
+}
+
 /**
  * The base prompt, the registry's skill index, and anything the user asked for on this send.
  *
@@ -61,12 +89,17 @@ plan.`;
  * putting them here would both defeat that design and re-send every skill on every request.
  */
 export function buildSystemPrompt(
-  a: { planMode?: boolean; index?: { name: string; description: string }[] } = {},
+  a: {
+    planMode?: boolean;
+    activePlan?: ActivePlan | null;
+    index?: { name: string; description: string }[];
+  } = {},
 ): string {
   const index = a.index ?? skillIndex();
   const sections = [BASE_PROMPT];
 
   if (a.planMode) sections.push(PLAN_MODE);
+  if (hasUnfinishedSteps(a.activePlan ?? null)) sections.push(stepModeSection(a.activePlan!));
 
   if (index.length > 0) {
     const listing = index.map((skill) => `- ${skill.name}: ${skill.description}`).join("\n");

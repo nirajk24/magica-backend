@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AttachmentSource, AttachmentsPage } from "@/contracts";
 
 const clerk = vi.hoisted(() => ({ userId: null as string | null }));
 const trigger = vi.hoisted(() => ({ dispatched: [] as string[] }));
@@ -49,6 +50,7 @@ const publicSendRoute = await import("@/app/api/public/v1/chats/[chatId]/message
 const publicRunRoute = await import("@/app/api/public/v1/runs/[runId]/route");
 const publicToolsRoute = await import("@/app/api/public/v1/tools/route");
 const publicToolRunRoute = await import("@/app/api/public/v1/tools/[toolName]/run/route");
+const publicAttachmentsRoute = await import("@/app/api/public/v1/attachments/route");
 
 const created: string[] = [];
 
@@ -85,6 +87,23 @@ const withKey = (key: string | null, url: string, init?: RequestInit) =>
     ...init,
     headers: key ? { authorization: `Bearer ${key}` } : {},
   });
+
+const listMedia = (key: string, query = "") =>
+  publicAttachmentsRoute.GET(withKey(key, `http://localhost/api/public/v1/attachments${query}`), {
+    params: Promise.resolve({}),
+  });
+
+/** A ready attachment row, written directly: uploads arrive through a signed browser flow. */
+const media = (userId: string, over: { name: string; source?: AttachmentSource }) => ({
+  userId,
+  status: "ready" as const,
+  source: "uploaded" as AttachmentSource,
+  type: "image",
+  contentType: "image/png",
+  size: 1024,
+  url: "https://cdn.test/file.png",
+  ...over,
+});
 
 beforeEach(() => {
   clerk.userId = freshUser();
@@ -322,6 +341,40 @@ describe("public API surface", () => {
 
     expect(chat.status, "a 403 would confirm the id exists").toBe(404);
     expect(run.status).toBe(404);
+  });
+
+  it("lists the caller's media and filters it by source", async () => {
+    const key = await issueKey();
+    const owner = clerk.userId!;
+
+    await db.attachment.createMany({
+      data: [
+        media(owner, { name: "uploaded.png", source: "uploaded" }),
+        media(owner, { name: "generated.png", source: "generated" }),
+      ],
+    });
+
+    const all = await envelope<AttachmentsPage>(await listMedia(key));
+    const generated = await envelope<AttachmentsPage>(await listMedia(key, "?source=generated"));
+
+    expect(all.data!.attachments.map((row) => row.name).sort()).toEqual([
+      "generated.png",
+      "uploaded.png",
+    ]);
+    expect(generated.data!.attachments.map((row) => row.name)).toEqual(["generated.png"]);
+  });
+
+  it("shows a caller nothing of another account's media", async () => {
+    const owner = clerk.userId!;
+    await issueKey(); // the account row is bootstrapped by a route, not by the test
+    await db.attachment.create({ data: media(owner, { name: "private.png" }) });
+
+    clerk.userId = freshUser();
+    const strangerKey = await issueKey();
+
+    const page = await envelope<AttachmentsPage>(await listMedia(strangerKey));
+
+    expect(page.data!.attachments).toEqual([]);
   });
 });
 

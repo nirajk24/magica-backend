@@ -14,7 +14,7 @@ synced copy of `src/contracts/`.
 | | |
 |---|---|
 | **Design docs** | [`ARCHITECTURE.md`](./ARCHITECTURE.md) — the system · [`LLD.md`](./LLD.md) — module-level design and the traps · [`CONVENTIONS.md`](./CONVENTIONS.md) — day-to-day rules |
-| **API reference** | `docs-site/` — a Mintlify site whose OpenAPI document is generated from the same schemas the routes validate against |
+| **API reference** | [magica-8fc30897.mintlify.site](https://magica-8fc30897.mintlify.site) — published from `docs-site/`, whose OpenAPI document is generated from the same schemas the routes validate against |
 
 ---
 

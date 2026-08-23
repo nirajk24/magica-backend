@@ -184,8 +184,12 @@ const document = {
       get: {
         summary: "List media",
         operationId: "listAttachments",
+        description:
+          "Everything you uploaded, plus everything the agent and your direct tool runs " +
+          "generated. Read-only: uploading is a signed browser flow, not a key-holder call.",
         parameters: [
           { name: "cursor", in: "query", schema: { type: "string" } },
+          { name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 50 } },
           { name: "source", in: "query", schema: { type: "string", enum: ["uploaded", "generated"] } },
           { name: "chatId", in: "query", schema: { type: "string" } },
         ],

@@ -1,10 +1,10 @@
-# magica-backend
+# Engineering conventions
 
-Agent-chat backend for the Magica clone. Next.js route handlers + Prisma/Postgres, with the
-agent loop running as a durable Trigger.dev task.
+Day-to-day rules for this repository. Next.js route handlers + Prisma/Postgres, with the agent
+loop running as a durable Trigger.dev task.
 
-**Design docs:** `LLD.md` (phased build plan, full contracts) and `ARCHITECTURE.md` (HLD, added
-at Phase 1). Read `LLD.md` §0 before adding anything.
+**Design docs:** [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the system, [`LLD.md`](./LLD.md) for
+module-level design and the traps this stack sets. Read both before adding anything substantial.
 
 ## Rules
 

@@ -1,153 +1,246 @@
 # magica-backend
 
-Backend for a Galaxy Agent Chat clone: a long-running, tool-using AI agent behind a REST API.
-Next.js route handlers own the request path, Trigger.dev runs the durable agent turns, PostgreSQL
-is the single source of truth, and every trust boundary is a Zod schema.
+Backend for an agent chat product: a long-running, tool-using AI agent behind a REST API.
 
-The frontend lives in [magica-frontend](https://github.com/nirajk24/magica-frontend) and consumes
-a synced copy of `src/contracts/`.
+A user sends a message; an agent reasons, calls media-generation tools, sometimes pauses to ask a
+question, and answers. A turn can take minutes and spend real credits, so the API never does the
+work itself — it validates, persists, reserves credits, dispatches a durable job and returns. The
+job survives deploys and restarts, and a browser that reloads mid-turn rebuilds the entire screen
+from PostgreSQL.
+
+The client lives in [magica-frontend](https://github.com/nirajk24/magica-frontend) and consumes a
+synced copy of `src/contracts/`.
+
+| | |
+|---|---|
+| **Design docs** | [`ARCHITECTURE.md`](./ARCHITECTURE.md) — the system · [`LLD.md`](./LLD.md) — module-level design and the traps · [`CONVENTIONS.md`](./CONVENTIONS.md) — day-to-day rules |
+| **API reference** | `docs-site/` — a Mintlify site whose OpenAPI document is generated from the same schemas the routes validate against |
+
+---
 
 ## Setup
 
-Requires Node 20.9+ (`.nvmrc` pins 20.20.2) and pnpm.
+Requires **Node 20.9+** (`.nvmrc` pins 20.20.2) and **pnpm**. You will need a PostgreSQL database
+and accounts for Clerk, Trigger.dev, OpenRouter and the media provider.
 
 ```bash
 nvm use
-pnpm install                 # generates the Prisma client via postinstall
-cp .env.example .env         # fill in every value; the app names any missing one at boot
-pnpm db:migrate              # apply migrations to the database in DATABASE_URL
-pnpm db:seed                 # demo user and chats
+pnpm install                 # generates the database client via postinstall
+cp .env.example .env         # fill in every value — the app names any missing one at boot
+pnpm db:migrate              # apply migrations
+pnpm db:seed                 # a demo account and chats
+```
+
+Running locally takes **two processes**:
+
+```bash
 pnpm dev                     # API on :3001
-pnpm trigger:dev             # the agent worker — a second process, required for turns to run
+pnpm trigger:dev             # the agent worker — without it, sends are accepted and nothing runs
 ```
 
 Verify with `curl localhost:3001/api/v1/health` — it answers only after a live database round trip.
 
-Deploying is **two deploys, every time**: the Next.js app (Vercel) and `pnpm trigger:deploy`.
-Deploying the app alone ships stale tasks. The Trigger.dev dashboard needs every non-optional
-variable from `lib/env.ts` — tasks parse the full environment at boot.
+### Environment
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `DATABASE_URL` / `DATABASE_URL_UNPOOLED` | yes | pooled connection for the app, direct for migrations |
+| `CLERK_SECRET_KEY` / `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | yes | authentication |
+| `TRIGGER_SECRET_KEY` / `TRIGGER_PROJECT_REF` | yes | durable job execution |
+| `OPENROUTER_API_KEY` | yes | the model provider |
+| `MAGICA_API_KEY` / `MAGICA_BASE_URL` | yes | the media-generation provider |
+| `FRONTEND_URL` | yes | CORS origin — a wrong value drops every browser request |
+| `TRANSLOADIT_KEY` / `TRANSLOADIT_SECRET` | no | uploads; absent, the signing route fails by name and nothing else is affected |
+| `ADMISSION_CREDITS`, `MAX_TURNS`, `MAX_STEPS`, … | no | tuning, all defaulted |
+
+`lib/env.ts` parses the whole environment at import, so a missing or malformed variable fails at
+boot naming the variable, rather than surfacing as `undefined` somewhere later.
+
+### Checks
 
 ```bash
-pnpm typecheck && pnpm lint && pnpm test   # 400+ tests; integration tests need DATABASE_URL
-pnpm check:wiring                          # fails on any export no production code reaches
+pnpm typecheck && pnpm lint && pnpm test    # 488 tests; integration tests need DATABASE_URL
+pnpm check:wiring                           # fails on any export no production code reaches
 ```
 
-Automated tests make **zero** live network calls: provider APIs are mocked with MSW and
-`onUnhandledRequest: "error"` turns an escaped request into a failing test.
+Automated tests make **zero** live network calls: provider APIs are mocked and an escaped request is
+a failing test rather than a silent charge.
 
-## Architecture
+### Deploying
 
-```
-send route ──▶ Postgres (message + run + credit hold, one transaction)
-     │
-     └─▶ Trigger.dev task: agent-turn ──▶ OpenRouter (streamText, tools)
-              │                              │
-              │         ┌────────────────────┴─ tool call, wrapped: cancel guard → validate →
-              │         ▼                       record → charge → execute → validate → settle
-              │    magica-node-run (child task, polls Magica; suspends between polls)
-              │
-              ├─▶ realtime: metadata snapshot + append-only text stream (preview only)
-              └─▶ Postgres: progressive block persistence, terminal finalize
+**Two deploys, every time.**
+
+```bash
+pnpm build                   # the web application (Vercel)
+pnpm trigger:deploy          # the agent worker
 ```
 
-**The REST request never does AI work.** Send validates, persists, reserves credits, dispatches
-idempotently and returns in milliseconds. The turn itself is a durable Trigger.dev run that
-survives deploys and restarts; a reloading client rebuilds the entire screen from the database and
-resubscribes to the streams.
+Deploying the application alone leaves the worker running previous code. The worker's dashboard
+needs **every** non-optional variable above — a task imports the database module, which parses the
+entire environment at import, so a missing variable no task ever reads still crashes every task at
+boot.
 
-**One tool registry** (`src/tools/registry.ts`). A tool is one declaration — description, Zod
-input/output, credit estimator, execute — and the LLM schema, validation, charging, and the
-rendered card all derive from it. Adding a tool is one file and one key. Interaction tools
-(`submit_plan`, `ask_questions`) declare a `interaction` kind and **no execute**: the missing
-execute is what parks the run on a waitpoint token instead of running anything.
+---
 
-**Waitpoints are kind-agnostic.** The orchestration mints a token, persists the payload, flushes
-realtime metadata and suspends — it never inspects what it is suspending on. One resolve route
-(`POST /waitpoints/:id/resolve`) settles any kind with a conditional update, so duplicate
-submissions are no-ops and adding a waitpoint type is a registry entry plus a contract variant.
-Plan steps are priced server-side through each tool's own estimator; the model never states a cost.
+## Project structure
+
+```
+magica-backend/
+├── ARCHITECTURE.md          the system: data model, lifecycle, failure handling, scalability
+├── LLD.md                   module-level design, invariants, and the traps in this stack
+├── CONVENTIONS.md           layering, comment style, the gates to run
+├── docs-site/               Mintlify API reference; openapi.json is generated, not written
+├── agent-skills/            versioned agent guidance, one directory per skill
+├── prisma/
+│   ├── schema.prisma        16 models
+│   ├── migrations/          forward-only, each with its rollback in a comment
+│   └── seed.ts
+├── scripts/
+│   ├── check-wiring.ts      finds exports nothing reaches
+│   └── gen-openapi.ts       OpenAPI from the live Zod contracts
+├── src/
+│   ├── app/api/
+│   │   ├── v1/              application API — session-authenticated
+│   │   └── public/v1/       public API — API-key authenticated
+│   ├── contracts/           Zod schemas + types. Imports nothing from src/; synced to the client
+│   ├── lib/                 env, routing pipeline, database, errors, credits, logging, skills,
+│   │                        uploads, API keys, webhook signing
+│   ├── services/            business logic, one domain each
+│   ├── agent/               the turn loop, block accumulation, model adapter, tool runtime
+│   ├── tools/               the tool registry and everything a tool needs
+│   ├── prompts/             system prompt assembly and model-message conversion
+│   └── trigger/             task definitions only — every file here is a build entry point
+└── tests/
+    ├── unit/                injected fakes: no database, no network
+    ├── integration/         real PostgreSQL, mocked HTTP
+    └── msw/                 mock handlers built from the contracts
+```
+
+---
+
+## Architecture in brief
+
+Full detail and the complete diagrams in [`ARCHITECTURE.md`](./ARCHITECTURE.md). The shape:
+
+```
+ browser
+    │  REST (bearer)                                        realtime ▲ preview only
+    ▼                                                                │
+ ┌─────────────────────────────────────────────────────────┐         │
+ │ API RUNTIME — route pipeline                            │         │
+ │   identify caller → Zod parse → service → envelope+CORS │         │
+ │   one wrapper per auth mode; everything else shared     │         │
+ └───────────────┬─────────────────────────────────────────┘         │
+                 │                                                   │
+   ONE TRANSACTION│ message + run + attachments + credit hold        │
+                 ▼                                                   │
+        ┌──────────────────┐        enqueue (idempotency key)        │
+        │   POSTGRESQL     │◀───────────────┐                        │
+        │  ─ the truth ─   │                │                        │
+        │                  │   ┌────────────┴────────────────────────┴──────────┐
+        │ constraints do   │   │ WORKER RUNTIME — durable, survives deploys     │
+        │ the exactly-once │   │                                                │
+        │ work:            │   │  agent-turn:                                   │
+        │  · 1 active run  │   │    stream ─┬─ text / reasoning                  │
+        │    per chat      │◀──┼─ progressive├─ tool call ──▶ guard → validate   │
+        │  · 1 assistant   │   │    writes  │   → record → CHARGE → execute      │
+        │    msg per run   │   │            │   → validate → settle              │
+        │  · unique ledger │   │            │        └──▶ child job ──▶ media    │
+        │    key per move  │   │            │             (checkpoints the       │
+        │                  │   │            │              provider run id,      │
+        │                  │   │            │              suspends between      │
+        │                  │   │            │              polls)                │
+        │                  │   │            └─ interaction ──▶ park on a token,  │
+        │                  │   │                zero compute, wake on resolve    │
+        │                  │   │                                                 │
+        │                  │◀──┼─ finalize: message + generated media + refund   │
+        └──────────────────┘   └────────────────────────┬────────────────────────┘
+                                                        │
+                      OpenRouter ◀── models   media provider ◀── generation
+                                            signed webhooks ──▶ customer receivers
+```
+
+**PostgreSQL is the only source of truth.** Realtime is a preview, reconciled at terminal. The test
+applied to every feature is whether a freshly loaded browser could rebuild the screen from the
+database alone.
+
+**One tool registry.** A tool is a single declaration — description, Zod input/output, credit
+estimator, executor — and the model's schema, validation, charging, and the rendered card all derive
+from it. Adding a tool is one file and one key. A tool with *no* executor is the mechanism that
+parks a run for human input, which is how approvals and questions are the same machinery.
+
+**Exactly-once is a set of database constraints, not application code.** One active run per chat and
+one assistant message per run are partial unique indexes; every credit movement carries a unique
+key; the media child job checkpoints the provider's run id before its first poll, so a restarted
+worker resumes the same paid job instead of buying a second one.
 
 **Credits are an append-only ledger** with a cached balance, and `balance === SUM(ledger)` is
-asserted across the test suite. A fixed admission hold is taken at send and always refunded at
-terminal; each tool charges its estimate *before* executing (exhaustion is caught before external
-cost) and reconciles to the provider-reported cost after. Every movement is keyed —
-`reserve:{runId}:{attempt}`, `charge:{invocationId}` — so a retried anything applies exactly once.
+asserted across the test suite. A fixed hold is taken at send and always refunded; each tool charges
+its estimate *before* executing, so exhaustion is caught before external cost, and reconciles to the
+provider's reported cost afterwards.
 
-**Exactly-once is a set of unique constraints, not application code**: one active run per chat and
-one assistant row per run are partial unique indexes; dispatch dedupes on
-`{userMessageId}:{attempt}`; the Magica child task is keyed on the invocation and checkpoints the
-provider's run id before its first poll, so a restarted worker resumes the same paid job instead of
-buying a second one.
+**Failures are data.** Tool errors return a structured result to the model, which self-corrects or
+explains. Anything fatal becomes a user-safe failed message with all partial output preserved and a
+retry affordance — explainable from the interface alone.
 
-**Provider schemas are resolved live.** The catalog fetch that hydrates pricing also stores each
-sub-model's input fields, and every outbound node request is checked against them before dispatch —
-a stale field name comes back as a tool error the model can correct rather than a provider
-rejection. There is no committed copy of those fields on purpose: a committed copy is exactly the
-stale schema this check exists to replace.
+**The public API is the same API.** Its route wrapper differs from the internal one in exactly one
+respect: the caller comes from a bearer key rather than a session. Message submission is literally
+one shared function, so the two surfaces cannot drift.
 
-**Failures are data.** Tool errors return `{ok:false, error, retryable}` to the model, which
-self-corrects or explains; the turn loop converts anything fatal into a user-safe failed message
-with all partial output preserved. Cancel flips our rows first (conditionally, so it cannot
-overwrite a completed turn), then stops the machine and expires tokens best-effort. Stale-lock
-recovery never infers liveness from timestamps — it asks Trigger.dev, and treats "the call failed"
-as "still alive".
+---
 
-**Uploads are signed server-side and bounded before they start.** `POST /uploads/sign` returns one
-HMAC-SHA384-signed Transloadit assembly per file, with the instructions inline in the signed string
-so a client cannot alter them and `num_expected_upload_files: 1` so a signature cannot be reused for
-a batch. The Community plan's 0.5 GB per-file and 5 GB monthly limits are enforced *before* anything
-is signed, and monthly usage is counted exactly once, on the transition into `ready`, in the same
-transaction as the attachment row. Completion is upserted on the assembly id, so a duplicate report
-lands on the same row. Results live on Transloadit's temporary storage and expire after 24 hours —
-`Attachment.expiresAt` carries that, and the UI renders it rather than pretending otherwise.
+## Design decisions and trade-offs
 
-**The public API is the same API.** `definePublicApiRoute` differs from `defineRoute` in exactly one
-thing: the caller comes from a bearer API key instead of a session. Parsing, the response envelope,
-error mapping and every service are shared — message submission is literally one function called by
-both routes — so the public surface cannot drift from the app's own behaviour. Keys are stored as
-SHA-256 (a 192-bit random token has nothing to brute-force, and a password hash's work factor would
-tax every request), returned once, and revoked rather than deleted. A direct tool run is a real run:
-it creates an `AgentRun` and executes through the same charged tool runtime the agent uses, so it is
-priced, reconciled, exactly-once and visible in usage without a second code path.
+**Charge before executing.** Catches credit exhaustion before any external cost and removes the
+late-settle race entirely. The cost is that a failed tool must refund itself, which is one extra
+ledger movement.
 
-**Webhooks never affect the turn that produced them.** `agent.started`, `agent.completed`,
-`agent.failed` and `tool.completed` are signed with the same Svix scheme the Magica platform uses.
-Emission writes the delivery row and hands it to a durable task — five attempts with exponential
-backoff, a delivered row never re-sent — and the emit path swallows its own failure by design,
-because a customer's unreachable receiver must not fail a paid turn. `docs-site/` is a Mintlify site
-whose OpenAPI document is generated from these same contracts (`pnpm docs:openapi`), so the
-published reference cannot drift from what the server enforces.
+**The admission hold is always refunded in full.** Net turn cost is the sum of tool charges. An
+earlier reserve/settle/refund-the-remainder model double-charged; a hold that is a gate rather than
+a price is simpler to reason about and impossible to get wrong by arithmetic.
 
-Layering is one-directional — route → service → `lib/db` — and `src/contracts/` imports nothing
-from the rest of the source, which is what makes it safe to copy to the frontend. `CONVENTIONS.md`
-holds the day-to-day rules; `LLD.md` holds the full design with every contract.
+**Manual retry only.** Automatic retry replays narrative the user has already watched and re-runs
+paid work, because regenerated tool ids no longer match the persisted rows. Retry is a deliberate
+user action on a visible failed turn.
 
-## Trade-offs
+**Never infer liveness from a timestamp.** A run parked on a question for fourteen minutes looks
+stale and is perfectly healthy, so stale-lock recovery asks the job runner — and treats a *failed*
+query as "still alive", because refunding a live run admits a second turn beside it.
 
-- **Clerk runs a development instance** (production needs a custom domain): dev-mode watermark and
-  a 100-user cap, acceptable for a demo.
-- **Free tiers everywhere.** OpenRouter's free path allows 50 requests/day, so `MAX_TURNS × MAX_STEPS`
-  is validated at boot against that budget and skill loads are capped per turn. The default model is
-  `openrouter/free`, a router that picks an available free model per request — which is also why the
-  served model is recorded per message from the response, not from configuration.
-- **Top-up is not a payment flow.** It exists so the ledger is exercised in both directions and a
-  credit-exhausted turn has a way forward.
-- **Context is the last 20 messages**, not token-budget trimming.
-- **Search is ILIKE over pg_trgm indexes** on titles and message content — right for this scale;
-  Postgres FTS is the upgrade path.
-- **Chat deletion is soft**, so ledger entries, invocations and generated assets stay explainable.
-- **Realtime tokens live 15 minutes** and the client refreshes proactively; the reference uses
-  25-hour tokens. Shorter is safer and exercises the refresh path.
-- **Rate limiting is a per-user counter in Postgres**, not a Redis sliding window.
+**The server prices everything a user is asked to approve.** A model never states a cost; each
+proposed step is priced through the same estimator that will charge for it. Otherwise the figures on
+an approval screen are numbers a model invented.
 
-## Improvements with more time
+**Contracts are copied, not published.** `src/contracts/` is synced to the client and its build
+fails on a byte-level mismatch. A versioned package would be correct at scale; for two repositories
+moving together, a sync check catches drift at build time with no release step.
 
-- Token-budget context assembly with summarization of older turns.
-- Postgres FTS (`tsvector`) for search; Redis for rate limiting at scale.
-- Model rotation across free providers on upstream 429s, with the served model already recorded
-  per message so history stays truthful.
-- Per-account LLM availability instead of a shared status row.
-- Contracts published as a versioned package instead of a synced copy.
-- Assembly results verified server-side against Transloadit before an attachment is trusted, rather
-  than from the uploading client's report.
-- Per-endpoint webhook retry policy and a manual redelivery control.
+**Development-tier third-party services.** Authentication runs a development instance (a production
+one needs a custom domain), and the model path uses a free router with strict daily request limits —
+so `MAX_TURNS × MAX_STEPS` is validated against that budget at boot and skill loads are capped per
+turn. These bound what can be demonstrated, not how the system is built.
+
+**Simplifications, each with a known upgrade path:** top-up is not a payment flow (it exists so the
+ledger is exercised in both directions); prompt context is a recent-message window rather than
+token-budget assembly with summarisation; search is trigram `ILIKE` rather than full-text search;
+rate limiting is a per-account counter in PostgreSQL rather than a distributed sliding window; model
+availability is a single shared row rather than per-account; upload results live on the transform
+provider's temporary storage and expire after 24 hours, surfaced as state rather than hidden.
+
+---
+
+## What I would improve with more time
+
+- **Token-budget context assembly** with summarisation of older turns, replacing the fixed window.
+- **Full-text search** (`tsvector`) and a distributed rate limiter, both of which the current
+  choices are deliberately sized below.
+- **Model rotation across providers** on upstream rate limits. The served model is already recorded
+  per message, so history would stay truthful; what is missing is the rotation policy and a way to
+  make the choice visible rather than surprising.
+- **Server-side verification of upload completions** — re-fetching the assembly from the provider
+  before trusting a client's report.
+- **Per-account model availability** instead of one shared row.
+- **Contracts as a versioned package**, with the client depending on a release rather than a synced
+  copy.
+- **Per-endpoint webhook retry policy** and a manual redelivery control, rather than one policy for
+  every receiver.

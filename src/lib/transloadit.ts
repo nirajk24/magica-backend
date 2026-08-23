@@ -46,6 +46,33 @@ export function signAssembly(a: {
   return { params, signature };
 }
 
+/**
+ * Whether a client-reported result URL is on a host we are willing to serve as an attachment.
+ *
+ * Completion is reported by the browser, so without this any address can be registered as a user's
+ * attachment and fed to the model. The hosts are configuration rather than a constant: what the
+ * provider hands back is an account-level storage decision — this one exports to R2, not to
+ * Transloadit's own temporary storage — and getting that wrong rejects every real upload.
+ *
+ * INVARIANT: matched on the parsed `hostname`, never the raw string. `https://host@evil.com` and
+ * `https://host.evil.com` both contain the host as a substring and both resolve somewhere else.
+ * An empty list allows anything, which is the documented pre-hardening behaviour.
+ */
+export function isAllowedResultHost(value: string, allowed: readonly string[]): boolean {
+  if (allowed.length === 0) return true;
+
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+
+  if (url.protocol !== "https:") return false;
+
+  return allowed.some((host) => url.hostname === host || url.hostname.endsWith(`.${host}`));
+}
+
 /** The `UploadUsage` bucket key: the UTC calendar month, e.g. "2026-08". */
 export function usagePeriod(now: Date): string {
   return now.toISOString().slice(0, 7);

@@ -28,6 +28,13 @@ const EnvShape = z.object({
   TRANSLOADIT_KEY: z.string().optional(),
   TRANSLOADIT_SECRET: z.string().optional(),
 
+  /**
+   * Hosts a completed upload may claim to be served from, comma-separated. Which one applies is an
+   * account-level storage decision at the provider, not something this code can assume — empty
+   * accepts any address, which is what §11 documents.
+   */
+  UPLOAD_RESULT_HOSTS: z.string().default("r2.dev,transloadit.com"),
+
   FRONTEND_URL: z.string().url(),
 
   ADMISSION_CREDITS: z.coerce.bigint().default(500_000n),

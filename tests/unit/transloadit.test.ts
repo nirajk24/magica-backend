@@ -1,7 +1,6 @@
 import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { CreateAttachment } from "@/contracts";
-import { signAssembly, usagePeriod } from "@/lib/transloadit";
+import { isAllowedResultHost, signAssembly, usagePeriod } from "@/lib/transloadit";
 
 const KEY = "test-key";
 const SECRET = "test-secret";
@@ -50,34 +49,31 @@ describe("usagePeriod", () => {
   });
 });
 
-describe("CreateAttachment result url", () => {
-  const report = (url: string) => ({
-    assemblyId: "a1",
-    status: "ready" as const,
-    file: { name: "shot.png", contentType: "image/png", size: 1024, url },
-  });
+describe("isAllowedResultHost", () => {
+  const HOSTS = ["r2.dev", "transloadit.com"];
 
-  const accepts = (url: string) => CreateAttachment.safeParse(report(url)).success;
-
-  it("accepts the provider's own result hosts", () => {
-    expect(accepts("https://tmp.transloadit.com/view/photo.png")).toBe(true);
-    expect(accepts("https://cdn.transloadit.com/fixtures/poster.png")).toBe(true);
-    expect(accepts("https://transloadit.com/x.png")).toBe(true);
+  /** The real shape this account returns: Transloadit exports results to R2, not to its own storage. */
+  it("accepts the host the provider actually serves results from", () => {
+    expect(
+      isAllowedResultHost(
+        "https://pub-e8fef8c0e03b44acb340577811800829.r2.dev/5f08/ac2d/726.avif",
+        HOSTS,
+      ),
+    ).toBe(true);
+    expect(isAllowedResultHost("https://tmp.transloadit.com/view/photo.png", HOSTS)).toBe(true);
   });
 
   it("rejects any other origin, however it is dressed up", () => {
-    expect(accepts("https://cdn.evil.com/x.png")).toBe(false);
+    expect(isAllowedResultHost("https://cdn.evil.com/x.png", HOSTS)).toBe(false);
     // Userinfo: the real host is `evil.com`, and a substring match would have passed this.
-    expect(accepts("https://tmp.transloadit.com@evil.com/x.png")).toBe(false);
-    // Suffix that merely ends in the host's characters, not in the host.
-    expect(accepts("https://tmp.transloadit.com.evil.com/x.png")).toBe(false);
-    expect(accepts("http://tmp.transloadit.com/x.png")).toBe(false);
+    expect(isAllowedResultHost("https://tmp.transloadit.com@evil.com/x.png", HOSTS)).toBe(false);
+    // A suffix that merely ends in the host's characters, not in the host.
+    expect(isAllowedResultHost("https://r2.dev.evil.com/x.png", HOSTS)).toBe(false);
+    expect(isAllowedResultHost("http://tmp.transloadit.com/x.png", HOSTS)).toBe(false);
+    expect(isAllowedResultHost("not a url", HOSTS)).toBe(false);
   });
 
-  it("still requires a ready report to carry a url at all", () => {
-    const file = { name: "shot.png", contentType: "image/png", size: 1024 };
-    expect(CreateAttachment.safeParse({ assemblyId: "a1", status: "ready", file }).success).toBe(
-      false,
-    );
+  it("allows anything when no hosts are configured, which is the documented default", () => {
+    expect(isAllowedResultHost("https://cdn.evil.com/x.png", [])).toBe(true);
   });
 });

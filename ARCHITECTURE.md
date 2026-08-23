@@ -431,8 +431,10 @@ Each is a scope decision with a known upgrade path, not an oversight.
 - **Upload results live on the transform provider's temporary storage** and expire after 24 hours.
   The expiry is surfaced as state rather than hidden; durable object storage is the upgrade.
 - **Assembly completion is reported by the uploading client**, not confirmed with the transform
-  provider. The reported `url` is constrained to the provider's own result host, matched on the
-  parsed hostname, so it cannot name an arbitrary address. What is still taken on trust is `size`,
+  provider. The reported `url` is constrained to a configured set of result hosts, matched on the
+  parsed hostname, so it cannot name an arbitrary address — where the provider actually stores a
+  result is an account-level decision, which is why it is configuration and not a constant. What is
+  still taken on trust is `size`,
   which the monthly quota is decremented by — under-reporting it stretches the allowance, at the
   account's own expense and within the per-file cap the schema enforces. Neither the row nor the
   quota is reachable across accounts: the upsert is ownership-checked and a guessed `assemblyId`

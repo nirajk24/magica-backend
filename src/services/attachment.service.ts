@@ -14,6 +14,7 @@ import { AppError, isUniqueViolation } from "@/lib/errors";
 import {
   MONTHLY_QUOTA_BYTES,
   PER_FILE_LIMIT_BYTES,
+  isAllowedResultHost,
   RESULT_TTL_MS,
   SIGNATURE_TTL_MS,
   signAssembly,
@@ -139,6 +140,12 @@ export async function signUploadAssemblies(a: {
 
 const mediaTypeOf = (contentType: string) => contentType.split("/")[0] as AttachmentDTO["type"];
 
+/** Read per call rather than at module load, so a test can set the list without a fresh import. */
+const allowedResultHosts = () =>
+  env.UPLOAD_RESULT_HOSTS.split(",")
+    .map((host) => host.trim())
+    .filter(Boolean);
+
 type UpsertArgs = { userId: string; report: CreateAttachment; now?: Date };
 
 /**
@@ -171,6 +178,12 @@ async function upsertAssemblyRow(a: UpsertArgs): Promise<AttachmentDTO> {
       `"${report.file.name}" is ${asGb(report.file.size)} GB; the per-file limit is 0.5 GB.`,
       { field: "file.size" },
     );
+  }
+
+  if (report.file.url && !isAllowedResultHost(report.file.url, allowedResultHosts())) {
+    throw new AppError("VALIDATION_ERROR", "That file is not served from an upload result host.", {
+      field: "file.url",
+    });
   }
 
   const row = await db.$transaction(async (tx) => {

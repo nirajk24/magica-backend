@@ -5,6 +5,7 @@ import {
   type ChatsQuery,
   type UpdateChat,
 } from "@/contracts";
+import { decodeCursor, encodeCursor } from "@/lib/cursor";
 import { db } from "@/lib/db";
 import { AppError } from "@/lib/errors";
 
@@ -134,19 +135,6 @@ export async function deleteChat(a: { userId: string; chatId: string }): Promise
   }
 }
 
-/** Opaque to the client: `(updatedAt, id)` is the composite the chat list index is built on. */
-function encodeCursor(row: { updatedAt: Date; id: string }): string {
-  return Buffer.from(`${row.updatedAt.toISOString()}|${row.id}`).toString("base64url");
-}
-
-function decodeCursor(cursor: string): { updatedAt: Date; id: string } | null {
-  const [iso, id] = Buffer.from(cursor, "base64url").toString("utf8").split("|");
-  if (!iso || !id) return null;
-
-  const updatedAt = new Date(iso);
-  return Number.isNaN(updatedAt.getTime()) ? null : { updatedAt, id };
-}
-
 /**
  * Most recently touched first, which is the order the sidebar renders.
  *
@@ -171,8 +159,8 @@ export async function listChats(a: { userId: string } & ChatsQuery): Promise<Cha
           ? [
               {
                 OR: [
-                  { updatedAt: { lt: after.updatedAt } },
-                  { updatedAt: after.updatedAt, id: { lt: after.id } },
+                  { updatedAt: { lt: after.at } },
+                  { updatedAt: after.at, id: { lt: after.id } },
                 ],
               },
             ]
@@ -189,6 +177,7 @@ export async function listChats(a: { userId: string } & ChatsQuery): Promise<Cha
 
   return {
     chats: page.map(toChatDTO),
-    nextCursor: rows.length > a.limit && last ? encodeCursor(last) : null,
+    nextCursor:
+      rows.length > a.limit && last ? encodeCursor({ at: last.updatedAt, id: last.id }) : null,
   };
 }

@@ -15,7 +15,6 @@ const ACTIVE = ["queued", "running", "waiting"] as const;
 
 type Invocations = RunMetadata["invocations"];
 
-/** The run's invocations in the shape the live tool cards render from, read rather than accumulated. */
 /**
  * Shortens every string in a tool's input so the projection stays small.
  *
@@ -34,6 +33,7 @@ function forDisplay(value: unknown): unknown {
   return value;
 }
 
+/** The run's invocations in the shape the live tool cards render from, read rather than accumulated. */
 async function projectInvocations(runId: string): Promise<Invocations> {
   const rows = await db.toolInvocation.findMany({
     where: { runId },

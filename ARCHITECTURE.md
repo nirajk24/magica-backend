@@ -392,9 +392,14 @@ The system is designed for these three pressures; the mechanisms below are the a
 thresholds are configuration rather than rewrites.
 
 **Many tools and skills.** Only skill *names and descriptions* enter the base prompt, and bodies are
-fetched on demand — so a large library costs a few hundred tokens, not tens of thousands. Tool
-declarations carry tags; past a configured count the loop can pass a relevant subset plus an
-always-on core, making prompt size independent of registry size.
+fetched on demand — so a large library costs a few hundred tokens, not tens of thousands. That part
+is built, and it is what actually scales to a hundred skills.
+
+Tools do not have the equivalent: the loop declares the whole registry on every request, because at
+eight tools a selection mechanism would cost more than it saves. The seam for it exists — `tags` on
+every declaration, already read by the public API's direct-run gate — so the upgrade is a filter at
+one call site, passing a tag-matched subset plus an always-on core rather than `registry`. Until a
+registry is large enough for that to pay, declaring all of it is the cheaper correct answer.
 
 **Long conversations.** Message reads are cursor-paginated on a composite index, with no unbounded
 scans anywhere. Prompt context is bounded to a recent window rather than growing with the chat.
@@ -422,7 +427,12 @@ Each is a scope decision with a known upgrade path, not an oversight.
   free-model path genuinely is shared, but per-account status is the more correct model.
 - **Upload results live on the transform provider's temporary storage** and expire after 24 hours.
   The expiry is surfaced as state rather than hidden; durable object storage is the upgrade.
-- **Assembly completion is reported by the uploading client** and validated by schema. Re-fetching
-  the assembly server-side before trusting it is the hardening step.
+- **Assembly completion is reported by the uploading client** and validated by schema, not against
+  the transform provider. Two things follow, and both are accepted rather than unnoticed: the
+  reported `url` is trusted, so a caller can register any address as their attachment; and the
+  reported `size` is what the monthly quota is decremented by, so under-reporting it stretches the
+  allowance. Neither reaches another account — the row is ownership-checked, and a guessed
+  `assemblyId` answers `NOT_FOUND`. Re-fetching the assembly from Transloadit and taking `url`,
+  `size` and `mime` from *its* response is the hardening step, and it closes both at once.
 - **Retries are manual.** Automatic retry replays narrative the user has already seen and re-runs
   paid work, because regenerated tool ids no longer match the persisted rows.

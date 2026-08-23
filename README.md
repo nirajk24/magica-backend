@@ -59,7 +59,7 @@ boot naming the variable, rather than surfacing as `undefined` somewhere later.
 ### Checks
 
 ```bash
-pnpm typecheck && pnpm lint && pnpm test    # 488 tests; integration tests need DATABASE_URL
+pnpm typecheck && pnpm lint && pnpm test    # 498 tests; integration tests need DATABASE_URL
 pnpm check:wiring                           # fails on any export no production code reaches
 ```
 
@@ -93,7 +93,7 @@ magica-backend/
 ├── agent-skills/            versioned agent guidance, one directory per skill
 ├── prisma/
 │   ├── schema.prisma        16 models
-│   ├── migrations/          forward-only, each with its rollback in a comment
+│   ├── migrations/          forward-only, each with rollback and compatibility notes
 │   └── seed.ts
 ├── scripts/
 │   ├── check-wiring.ts      finds exports nothing reaches

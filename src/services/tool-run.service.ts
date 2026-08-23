@@ -2,8 +2,10 @@ import { z } from "zod";
 import type { RunToolResult, ToolsPage } from "@/contracts";
 import type { AgentTool } from "@/tools/define";
 import { db } from "@/lib/db";
+import { env } from "@/lib/env";
 import { AppError } from "@/lib/errors";
 import { uuidv7 } from "@/lib/ids";
+import { consumeToolRunAllowance } from "@/lib/rate-limit";
 import { estimateMicrocredits } from "@/tools/pricing";
 import { getTool, registry } from "@/tools/registry";
 import { publicToolRun } from "@/trigger/public-tool-run";
@@ -100,6 +102,8 @@ export async function startDirectToolRun(a: {
   toolName: string;
   input: unknown;
 }): Promise<DirectToolRun> {
+  await consumeToolRunAllowance({ userId: a.userId, perMinute: env.SEND_RATE_PER_MINUTE });
+
   const tool = getTool(a.toolName);
 
   if (!tool || !tool.tags?.includes(DIRECT_TAG)) {

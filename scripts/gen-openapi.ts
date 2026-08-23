@@ -84,7 +84,19 @@ const document = {
       "conversations back. Every response is wrapped in `{ data }`; every failure is " +
       "`{ error: { code, message, traceId } }`.",
   },
-  servers: [{ url: "{baseUrl}/api/public/v1", variables: { baseUrl: { default: "" } } }],
+  // Set PUBLIC_API_ORIGIN before generating so the hosted reference has a host to call;
+  // it stays a template variable either way, so a reader can point it at their own deployment.
+  servers: [
+    {
+      url: "{origin}/api/public/v1",
+      variables: {
+        origin: {
+          default: process.env.PUBLIC_API_ORIGIN ?? "http://localhost:3001",
+          description: "Your deployment's origin.",
+        },
+      },
+    },
+  ],
   security: [{ apiKey: [] }],
   components: {
     securitySchemes: {

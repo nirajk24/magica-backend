@@ -3,8 +3,21 @@ title: Webhooks
 description: Signed lifecycle events, and how to verify one.
 ---
 
-Register an endpoint under **Settings → Webhooks** and subscribe it to any of four events. The
-signing secret is shown once, when the endpoint is created.
+Register an endpoint and subscribe it to any of four events. Like key management, this runs on the
+application API with your signed-in session:
+
+```bash
+curl -X POST "$APP_BASE/api/v1/webhooks" \
+  -H "Authorization: Bearer $SESSION_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com/hooks/magica", "events": ["agent.completed", "agent.failed"]}'
+```
+
+```json
+{ "data": { "endpoint": { "id": "…", "url": "https://example.com/hooks/magica" }, "secret": "whsec_…" } }
+```
+
+The signing secret appears only in this response. Receivers must be HTTPS.
 
 | Event | Fires when |
 |---|---|

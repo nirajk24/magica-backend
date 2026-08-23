@@ -7,10 +7,11 @@
   },
   "servers": [
     {
-      "url": "{baseUrl}/api/public/v1",
+      "url": "{origin}/api/public/v1",
       "variables": {
-        "baseUrl": {
-          "default": ""
+        "origin": {
+          "default": "http://localhost:3001",
+          "description": "Your deployment's origin."
         }
       }
     }

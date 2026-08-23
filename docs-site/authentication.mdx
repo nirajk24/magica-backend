@@ -3,11 +3,32 @@ title: Authentication
 description: Bearer API keys, how they are stored, and what revocation means.
 ---
 
-Every request carries a key issued from the app under **Settings → API keys**:
+Every request carries a bearer key:
 
 ```
 Authorization: Bearer mk_live_…
 ```
+
+## Getting a key
+
+Keys are minted through the application API, authenticated with your signed-in session:
+
+```bash
+curl -X POST "$APP_BASE/api/v1/api-keys" \
+  -H "Authorization: Bearer $SESSION_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "my integration"}'
+```
+
+```json
+{ "data": { "apiKey": { "id": "…", "name": "my integration", "fingerprint": "9f2c1a4e" }, "key": "mk_live_…" } }
+```
+
+`GET /api/v1/api-keys` lists them and `DELETE /api/v1/api-keys/{id}` revokes one.
+
+<Warning>
+`key` appears in this response and nowhere else, ever. Store it when you create it.
+</Warning>
 
 ## How keys are stored
 

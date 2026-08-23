@@ -51,12 +51,12 @@ may run for minutes. They share one database and never call each other synchrono
       │ one transaction   │                   │ enqueue       │
       ▼                   │                   ▼  (idempotency key)
 ╔═══════════════════╗     │      ╔════════════════════════════╪════════════════════╗
-║ POSTGRESQL        ║     │      ║ WORKER RUNTIME — durable tasks                   ║
+║ POSTGRESQL        ║     │      ║ WORKER RUNTIME — durable tasks                  ║
 ║ ── the truth ──   ║     │      ║                            │                    ║
 ║                   ║     │      ║  ┌─ agent-turn ────────────┴─────────────────┐  ║
 ║ User              ║◀────┼──────╬─▶│  bootstrap → stream loop → finalize       │  ║
-║ CreditLedgerEntry ║  progressive║  │                                          │  ║
-║ Chat / Message    ║  + terminal ║  │  ├─ text / reasoning / tool call ────────┼──╬──▶ OpenRouter
+║ CreditLedgerEntry ║ progressive║  │                                           │  ║
+║ Chat / Message    ║ + terminal ║  │  ├─ text / reasoning / tool call ─────────┼──╬──▶ OpenRouter
 ║ AgentRun          ║   writes   ║  │  │                                        │  ║   (streaming)
 ║ ToolInvocation    ║            ║  │  ├─ charged tool wrapper:                 │  ║
 ║ Waitpoint         ║            ║  │  │  guard → validate → record → CHARGE    │  ║
@@ -68,18 +68,18 @@ may run for minutes. They share one database and never call each other synchrono
 ║ WebhookEndpoint   ║            ║  │  │             polls; SUSPENDS between)   │  ║
 ║ WebhookDelivery   ║            ║  │  │                                        │  ║
 ║ LlmStatus         ║            ║  │  └─ interaction tool (no executor)        │  ║
-║ SendRateLimit     ║            ║  │     └─▶ park on a waitpoint token ────────┼──╮ ║
-║                   ║            ║  │         (zero compute while waiting)      │  │ ║
-║ ── constraints ── ║            ║  └───────────────────────────────────────────┘  │ ║
-║ one active run    ║            ║                                                 │ ║
-║   per chat        ║            ║  ┌─ public-tool-run ─┐  ┌─ deliver-webhook ──┐  │ ║
-║ one assistant msg ║            ║  │ same charged      │  │ HMAC-signed, 5×    │──╬─╬──▶ customer
-║   per run         ║            ║  │ wrapper, no model │  │ backoff, once only │  │ ║    receiver
-║ unique ledger key ║            ║  └───────────────────┘  └────────────────────┘  │ ║
-╚═══════════════════╝            ╚═════════════════════════════════════════════════╪═╝
-        ▲                                                                          │
-        │                        POST /waitpoints/:id/resolve                      │
-        └──────────────────────────────────────────────────────────────────────────┘
+║ SendRateLimit     ║            ║  │     └─▶ park on a waitpoint token ────────┼╮ ║
+║                   ║            ║  │         (zero compute while waiting)      ││ ║
+║ ── constraints ── ║            ║  └───────────────────────────────────────────┘│ ║
+║ one active run    ║            ║                                               │ ║
+║   per chat        ║            ║  ┌─ public-tool-run ─┐  ┌─ deliver-webhook ──┐│ ║
+║ one assistant msg ║            ║  │ same charged      │  │ HMAC-signed, 5×    │╬─╬──▶ customer
+║   per run         ║            ║  │ wrapper, no model │  │ backoff, once only ││ ║    receiver
+║ unique ledger key ║            ║  └───────────────────┘  └────────────────────┘│ ║
+╚═══════════════════╝            ╚═══════════════════════════════════════════════╪═╝
+        ▲                                                                        │
+        │                        POST /waitpoints/:id/resolve                    │
+        └────────────────────────────────────────────────────────────────────────┘
                      (conditional update wins → completes the token → wakes the run)
 
   Uploads bypass both runtimes: the API signs an assembly, the browser uploads

@@ -88,7 +88,7 @@ describe("webhook signatures", () => {
       docBody: string,
       docHeaders: Record<string, string>,
     ) => {
-      const key = Buffer.from(docSecret.replace("whsec_", ""), "base64url");
+      const key = Buffer.from(docSecret.replace("mgwh_", ""), "base64url");
       const signed = `${docHeaders["svix-id"]}.${docHeaders["svix-timestamp"]}.${docBody}`;
       const expected = `v1,${createHmac("sha256", key).update(signed).digest("base64")}`;
 

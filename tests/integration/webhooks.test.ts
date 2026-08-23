@@ -70,7 +70,7 @@ describe("endpoint registration", () => {
   it("returns the signing secret once and keeps it out of every later read", async () => {
     const { endpoint, secret } = await registerEndpoint();
 
-    expect(secret.startsWith("whsec_")).toBe(true);
+    expect(secret.startsWith("mgwh_")).toBe(true);
 
     const listed = await envelope<{ endpoints: unknown[] }>(
       await webhooksRoute.GET(new Request("http://localhost/api/v1/webhooks"), {

@@ -1,6 +1,12 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
-const SECRET_PREFIX = "whsec_";
+/**
+ * Namespaced rather than the conventional `whsec_`, which several vendors share. Secret scanners
+ * match that prefix by shape, so a customer committing one of our secrets — or a fixture shaped
+ * like one — is reported as a leaked Stripe key. The signature scheme is unaffected: a receiver
+ * strips the prefix before decoding either way.
+ */
+const SECRET_PREFIX = "mgwh_";
 
 export type SignatureHeaders = {
   "svix-id": string;

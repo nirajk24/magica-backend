@@ -14,7 +14,7 @@ curl -X POST "$APP_BASE/api/v1/webhooks" \
 ```
 
 ```json
-{ "data": { "endpoint": { "id": "…", "url": "https://example.com/hooks/magica" }, "secret": "whsec_…" } }
+{ "data": { "endpoint": { "id": "…", "url": "https://example.com/hooks/magica" }, "secret": "mgwh_…" } }
 ```
 
 The signing secret appears only in this response. Receivers must be HTTPS.
@@ -56,14 +56,14 @@ svix-signature: v1,BASE64…
 ```
 
 Sign `{svix-id}.{svix-timestamp}.{body}` with HMAC-SHA256, keyed by your secret with the
-`whsec_` prefix stripped and the remainder base64url-decoded, then compare in constant time
+`mgwh_` prefix stripped and the remainder base64url-decoded, then compare in constant time
 against the part after `v1,`.
 
 ```ts
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 function verify(secret: string, body: string, headers: Record<string, string>) {
-  const key = Buffer.from(secret.replace("whsec_", ""), "base64url");
+  const key = Buffer.from(secret.replace("mgwh_", ""), "base64url");
   const signed = `${headers["svix-id"]}.${headers["svix-timestamp"]}.${body}`;
   const expected = `v1,${createHmac("sha256", key).update(signed).digest("base64")}`;
 

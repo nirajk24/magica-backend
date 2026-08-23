@@ -57,9 +57,11 @@ export const agentTurn = task({
 
     const runtime = createToolRuntime({
       turn: { userId: turn.userId, chatId: turn.chatId, runId },
-      publish: (invocations) => {
+      // Flushed, not just set: a tool card set immediately before `triggerAndWait` suspends the
+      // machine would otherwise wait on the background flush and never reach the client.
+      publish: async (invocations) => {
         metadata.set("invocations", invocations);
-        return Promise.resolve();
+        await metadata.flush();
       },
       publishPlan: (plan) => {
         if (plan === undefined) metadata.del("activePlan");

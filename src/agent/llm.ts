@@ -131,7 +131,7 @@ export function createStreamStarter(a: {
     });
 
     const result = streamText({
-      model: openrouter.chat(modelId, { reasoning: { enabled: true, effort: "medium" } }),
+      model: openrouter.chat(modelId, { reasoning: { enabled: true, effort: "low" } }),
       // Not a `system` message inside `messages`: the SDK rejects that outright.
       instructions: buildSystemPrompt({ planMode: a.planMode, activePlan: a.activePlan }),
       messages,

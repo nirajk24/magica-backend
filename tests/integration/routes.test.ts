@@ -57,6 +57,7 @@ const { db } = await import("@/lib/db");
 const { env } = await import("@/lib/env");
 const { uuidv7 } = await import("@/lib/ids");
 const { getBalance, sumLedger } = await import("@/lib/credits");
+const { allowanceWindow } = await import("@/lib/rate-limit");
 
 const chatsRoute = await import("@/app/api/v1/chats/route");
 const chatRoute = await import("@/app/api/v1/chats/[chatId]/route");
@@ -197,7 +198,7 @@ describe("POST /chats/:id/messages", () => {
 
     const minute = 60_000;
     const windows = [Date.now(), Date.now() + minute].map((at) =>
-      new Date(at).toISOString().slice(0, 16),
+      allowanceWindow("send", new Date(at)),
     );
 
     await db.sendRateLimit.createMany({

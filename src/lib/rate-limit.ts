@@ -1,8 +1,15 @@
 import { db } from "@/lib/db";
 import { AppError } from "@/lib/errors";
 
-/** Minute-granularity bucket key; `(userId, window)` is the table's primary key. */
-const currentWindow = () => new Date().toISOString().slice(0, 16);
+/**
+ * The minute bucket a scope counts into. `(userId, window)` is the table's primary key, so the
+ * scope prefix is what keeps one allowance from consuming another.
+ *
+ * Exported because a test that wants to arrive at a limit pre-fills the bucket rather than sending
+ * N times — and a test that builds the key itself drifts silently the moment a scope is added.
+ */
+export const allowanceWindow = (scope: string, at: Date = new Date()) =>
+  `${scope}:${at.toISOString().slice(0, 16)}`;
 
 const currentDay = () => new Date().toISOString().slice(0, 10);
 
@@ -43,7 +50,7 @@ async function consumeAllowance(a: {
   perMinute: number;
   message: string;
 }): Promise<void> {
-  const count = await countAgainst(a.userId, `${a.scope}:${currentWindow()}`);
+  const count = await countAgainst(a.userId, allowanceWindow(a.scope));
 
   if (count > a.perMinute) {
     throw new AppError("RATE_LIMITED", a.message, undefined, secondsLeftInMinute());
@@ -89,7 +96,7 @@ export async function consumeApiKeyAllowance(a: {
   const subject = `key:${a.apiKeyId}`;
 
   if (a.perMinute !== null) {
-    const count = await countAgainst(subject, `min:${currentWindow()}`);
+    const count = await countAgainst(subject, allowanceWindow("min"));
 
     if (count > a.perMinute) {
       throw new AppError(

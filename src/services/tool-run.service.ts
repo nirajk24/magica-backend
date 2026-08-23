@@ -6,6 +6,7 @@ import { AppError } from "@/lib/errors";
 import { uuidv7 } from "@/lib/ids";
 import { estimateMicrocredits } from "@/tools/pricing";
 import { getTool, registry } from "@/tools/registry";
+import { publicToolRun } from "@/trigger/public-tool-run";
 
 /**
  * Tools the public API may execute directly: provider work, not conversational machinery.
@@ -85,13 +86,16 @@ export type DirectToolRun = {
 };
 
 /**
- * Records a direct tool execution and everything needed to run it durably.
+ * Records a direct tool execution and dispatches it durably.
  *
- * INVARIANT: nothing external is called here. The route returns as soon as the rows exist, and the
- * provider call happens in the task — so a public caller gets the same accepted-then-poll
- * behaviour the Magica API itself has, rather than an HTTP request held open for two minutes.
+ * INVARIANT: the only path to `publicToolRun.trigger`, and the dispatch is keyed on the tool-call
+ * id, so a repeated request cannot run the provider twice.
+ *
+ * The provider call happens in the task, not here — a public caller gets the same
+ * accepted-then-poll behaviour the Magica API itself has, rather than an HTTP request held open
+ * for the length of a generation.
  */
-export async function openDirectToolRun(a: {
+export async function startDirectToolRun(a: {
   userId: string;
   toolName: string;
   input: unknown;
@@ -137,7 +141,14 @@ export async function openDirectToolRun(a: {
     });
   });
 
-  return { runId, toolUseId: uuidv7(), chatId, toolName: a.toolName, input: parsed.data };
+  const toolUseId = uuidv7();
+
+  await publicToolRun.trigger(
+    { userId: a.userId, chatId, runId, toolUseId, toolName: a.toolName, input: parsed.data },
+    { idempotencyKey: toolUseId },
+  );
+
+  return { runId, toolUseId, chatId, toolName: a.toolName, input: parsed.data };
 }
 
 /** Marks a direct run terminal. Conditional, like every other terminal write in the system. */

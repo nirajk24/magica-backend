@@ -21,6 +21,19 @@ export function catalogHandler(models?: Record<string, { nodeType: string; cost?
           "gpt-image-2": {
             nodeType: "gpt_image_2",
             cost: { type: "per_image", value: 0.5 },
+            subModels: [
+              {
+                subModelId: "gpt-image-2-text",
+                inputFieldOptions: [
+                  { zodExpectedName: "prompt", dataType: "string", required: true, max: 4000 },
+                  { zodExpectedName: "size", dataType: "string" },
+                  { zodExpectedName: "quality", dataType: "string" },
+                  { zodExpectedName: "background", dataType: "string" },
+                  { zodExpectedName: "n", dataType: "number" },
+                  { zodExpectedName: "output_format", dataType: "string" },
+                ],
+              },
+            ],
           },
         },
     }),

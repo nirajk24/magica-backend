@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { env } from "@/lib/env";
+import { hydrateFieldSpecs } from "@/tools/catalog-schema";
 
 const PerImage = z.object({ type: z.literal("per_image"), value: z.number() });
 const PerMinute = z.object({
@@ -96,7 +97,11 @@ export function resetPricing(): void {
 const CatalogResponse = z.object({
   models: z.record(
     z.string(),
-    z.object({ nodeType: z.string(), cost: z.unknown().optional() }),
+    z.object({
+      nodeType: z.string(),
+      cost: z.unknown().optional(),
+      subModels: z.unknown().optional(),
+    }),
   ),
 });
 
@@ -124,6 +129,11 @@ async function fetchCatalogPricing(): Promise<number> {
     if (!res.ok) return 0;
 
     const { models } = CatalogResponse.parse(await res.json());
+
+    // The same fetch feeds both authorities: the prices that charge, and the field schemas that
+    // outbound requests are checked against.
+    hydrateFieldSpecs(Object.values(models));
+
     return hydratePricing(Object.values(models));
   } catch {
     return 0;

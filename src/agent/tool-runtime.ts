@@ -1,5 +1,6 @@
 import { INPUT_VALUE_CHARS, type RunMetadata } from "@/contracts";
 import { chargeTool, reconcileToolCharge, refundToolCharge } from "@/lib/credits";
+import { validateNodeInput } from "@/tools/catalog-schema";
 import { db } from "@/lib/db";
 import { AppError, ToolError } from "@/lib/errors";
 import type { Logger } from "@/lib/logger";
@@ -136,6 +137,14 @@ export function createToolRuntime(a: {
      * `magicaRunId` check dedups the submission — two guards on the one call that costs money.
      */
     async runNode({ invocationId, request }) {
+      // Checked against the provider's live schema before anything durable is dispatched, so a
+      // stale field name comes back as a correctable tool error instead of a provider rejection.
+      validateNodeInput({
+        nodeType: request.nodeType,
+        subModelId: request.subModelId,
+        input: request.input,
+      });
+
       await db.toolInvocation.update({
         where: { id: invocationId },
         data: { subModelId: request.subModelId ?? null },

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ToolError } from "@/lib/errors";
 import { pollUntilTerminal, runMagicaNode } from "@/tools/magica-client";
+import { resetFieldSpecs, validateNodeInput } from "@/tools/catalog-schema";
 import {
   ensureCatalogPricing,
   estimateMicrocredits,
@@ -146,8 +147,9 @@ describe("magica client", () => {
 });
 
 describe("catalog pricing", () => {
-  it("hydrates live prices and keys them by nodeType, not the catalog map key", async () => {
+  it("hydrates prices AND field schemas from one fetch, keyed by nodeType", async () => {
     resetPricing();
+    resetFieldSpecs();
     server.use(catalogHandler());
 
     const applied = await ensureCatalogPricing();
@@ -157,5 +159,24 @@ describe("catalog pricing", () => {
       estimateMicrocredits("gpt_image_2", {}),
       "must be reachable under the nodeType, not under 'gpt-image-2'",
     ).toBe(500_000n);
+
+    expect(() =>
+      validateNodeInput({
+        nodeType: "gpt_image_2",
+        subModelId: "gpt-image-2-text",
+        input: { prompt: "a mountain", size: "Auto" },
+      }),
+    ).not.toThrow();
+    expect(
+      () =>
+        validateNodeInput({
+          nodeType: "gpt_image_2",
+          subModelId: "gpt-image-2-text",
+          input: { image_url: "https://x.test/a.png" },
+        }),
+      "the fetched schema, not our Zod copy, is what rejects a stale field name",
+    ).toThrow(/image_url is not a field/);
+
+    resetFieldSpecs();
   });
 });

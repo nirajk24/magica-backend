@@ -1273,7 +1273,7 @@ own description.
 
 ---
 
-### Phase 5 — Tools 2–4 + chat management · the widening · COMPLETE except `get_model_schema`
+### Phase 5 — Tools 2–4 + chat management · the widening · COMPLETE
 
 Pure additive. **If any of this requires touching `run-agent-turn.ts`, stop — a seam is missing.**
 
@@ -1292,13 +1292,21 @@ Pure additive. **If any of this requires touching `run-agent-turn.ts`, stop — 
 - **A new node type needs a row in the committed fallback price table**, not only the live catalog.
   `estimateMicrocredits` throws on an unpriced node, so without one a catalog outage turns every call
   to that tool into a failed turn instead of a charged one.
-- `get_model_schema` — cached per process; always render the duration (7 ms cache hit vs 3.7 s cold).
-  **Still outstanding, and possibly not wanted.** What the scope authority actually asks for is
-  *"resolve current input fields from the Magica model catalog/schema instead of duplicating a stale
-  provider schema"* — a statement about where **our** validation gets its fields, not about giving the
-  model a tool. A model-callable version spends one OpenRouter request per call against a 50/day cap,
-  which is what decision #42 exists to protect. The cheaper reading is to check a node's request
-  fields against the catalog we already fetch for pricing.
+- ~~`get_model_schema`~~ — **CUT as a model-callable tool, and the requirement met server-side.**
+  The scope authority asks that input fields *"resolve from the Magica model catalog/schema instead
+  of duplicating a stale provider schema"* — a statement about where **our** validation gets its
+  fields. `tools/catalog-schema.ts` stores every sub-model's field specs from the same fetch that
+  hydrates pricing, and `runNode` checks each outbound request against them before dispatch: an
+  unknown field, a missing required one, an out-of-enum or out-of-range value comes back as a
+  `ToolError` the model corrects, instead of a provider rejection after a durable dispatch. No
+  committed fallback on purpose — a committed copy IS the stale duplicate; with no catalog, Zod
+  stays the transport guard. A callable tool would cost one OpenRouter request per call (decision
+  #42), and the reference calls its equivalent before every generation.
+- **`gpt-image-2-edit` shipped** — not waiting for uploads. Edit mode's only new field is
+  `uploadedImages: string[]` (the catalog's name, not `image_url`), and a URL from an earlier tool
+  result is a legitimate source today, which is exactly the observed reference flow (generate, then
+  edit). The sub-model is derived from the input — `uploadedImages` present means edit — so the
+  model never states a sub-model and the two cannot disagree.
 - `GET /chats` with `?cursor&search&filter`; `PATCH`/`DELETE /chats/:id`; message pagination via
   `messagesCursor` — **done**. Search covers titles **and message content** as one `EXISTS` against
   the trigram index (the PDF requires both). `PATCH` carries `updatedAt` forward explicitly, or a
@@ -1463,6 +1471,8 @@ from here.
 | A run parked on a waitpoint left in `running` | `ActiveRun.status` declares `waiting` and nothing ever writes it, so a client cannot tell a thinking turn from one that is asking a question | flip to `waiting` when the token is minted and back to `running` when it resolves, both conditional on a non-terminal status so a cancel is not undone |
 | Unconditional writes when the task wakes up | a cancel that swept the row to `expired`, or a resolve that already landed, is overwritten by the task finishing its own bookkeeping afterwards | every post-park write is `updateMany … WHERE status='pending'` / `WHERE status IN (non-terminal)` |
 | A client able to send the server's own resolution variant | `{expired:true}` is in `WaitpointResolution`, so a client could expire its own waitpoint through a path that skips the timeout | the route parses `ResolveWaitpoint`, which has no expiry variant. The union is only assembled where the server writes it |
+| `updatedAt: undefined` in a Prisma update meaning "leave it" | it means "not provided", so `@updatedAt` bumps the row anyway — a rename reorders the sidebar, and can skip or repeat a row mid-pagination because `updatedAt` is half the cursor key | read the current value and write it back explicitly |
+| Two `OR` keys in one Prisma filter object | the second silently replaces the first — a cursored search restarts the full result set on every page | wrap each `OR` in its own clause under one `AND` array |
 | A fixed number of `..` hops to a shipped data directory | the bundle puts `agent-skills/` at its root and the compiled task two levels down at `src/trigger/`, so three hops lands outside the bundle entirely — measured, not guessed | search upward from `import.meta.dirname`, bounded, and throw when absent. `findSkillsDir` is extracted so a test can assert the real bundle layout |
 
 ---

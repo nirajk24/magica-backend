@@ -15,6 +15,7 @@
     "typecheck": "tsc --noEmit",
     "check:wiring": "tsx scripts/check-wiring.ts",
     "check:migrations": "tsx scripts/check-migrations.ts",
+    "credits:grant": "tsx scripts/grant-credits.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "db:generate": "prisma generate",

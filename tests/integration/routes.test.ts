@@ -64,7 +64,6 @@ const chatRoute = await import("@/app/api/v1/chats/[chatId]/route");
 const sendRoute = await import("@/app/api/v1/chats/[chatId]/messages/route");
 const activeRunRoute = await import("@/app/api/v1/chats/[chatId]/active-run/route");
 const creditsRoute = await import("@/app/api/v1/credits/route");
-const topUpRoute = await import("@/app/api/v1/credits/top-up/route");
 const cancelRoute = await import("@/app/api/v1/runs/[runId]/cancel/route");
 const retryRoute = await import("@/app/api/v1/messages/[messageId]/retry/route");
 const llmStatusRoute = await import("@/app/api/v1/llm/status/route");
@@ -376,54 +375,6 @@ describe("GET /credits", () => {
       "balance === SUM(ledger), over REST",
     ).toBe(await sumLedger(userId));
     expect(body.data?.entries.map((e) => e.type)).toContain("reserve");
-  });
-});
-
-describe("POST /credits/top-up", () => {
-  let keySeed: string;
-  beforeEach(() => {
-    keySeed = crypto.randomUUID();
-  });
-
-  const topUp = (amount: string, key?: string) =>
-    topUpRoute.POST(
-      new Request("http://localhost/api/v1/credits/top-up", {
-        method: "POST",
-        body: JSON.stringify({ amount }),
-        headers: key ? { "Idempotency-Key": key } : {},
-      }),
-    );
-
-  it("adds credits and returns the new balance as a string", async () => {
-    const userId = clerk.userId!;
-    const res = await topUp("1000000", `${keySeed}-a`);
-    const body = await envelope<{ balance: string }>(res);
-
-    expect(res.status).toBe(200);
-    expect(body.data?.balance).toBe((env.SIGNUP_GRANT_CREDITS + 1_000_000n).toString());
-    expect(await sumLedger(userId)).toBe(await getBalance(userId));
-  });
-
-  it("grants once for a repeated idempotency key", async () => {
-    const userId = clerk.userId!;
-    await topUp("1000000", `${keySeed}-same`);
-    await topUp("1000000", `${keySeed}-same`);
-
-    expect(await getBalance(userId)).toBe(env.SIGNUP_GRANT_CREDITS + 1_000_000n);
-    expect(await sumLedger(userId)).toBe(await getBalance(userId));
-  });
-
-  it("requires the header, because without it a retry would grant twice", async () => {
-    const res = await topUp("1000000");
-    expect(res.status).toBe(400);
-    expect((await envelope(res)).error?.code).toBe("VALIDATION_ERROR");
-  });
-
-  it("rejects an amount that is not a positive integer string", async () => {
-    for (const amount of ["0", "-5", "1.5", "abc", ""]) {
-      const res = await topUp(amount, `${keySeed}-${amount}`);
-      expect(res.status, `amount ${JSON.stringify(amount)}`).toBe(400);
-    }
   });
 });
 

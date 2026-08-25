@@ -546,10 +546,6 @@ export const ToolSpecDTO = z.object({
 export const ToolsPage = z.object({ tools: z.array(ToolSpecDTO) });
 
 /** Microcredits as a decimal string, like every other credit value on the wire. */
-export const TopUp = z.object({ amount: z.string().regex(/^[1-9]\d*$/) });
-
-export const TopUpResult = z.object({ balance: z.string() });
-
 export const Feedback = z.object({ type: z.enum(["like", "dislike"]).nullable() });
 
 export type SendMessage = z.infer<typeof SendMessage>;
@@ -572,8 +568,6 @@ export type UsageCategory = z.infer<typeof UsageCategory>;
 export type UsagePage = z.infer<typeof UsagePage>;
 export type CreditsPage = z.infer<typeof CreditsPage>;
 export type LlmStatus = z.infer<typeof LlmStatus>;
-export type TopUp = z.infer<typeof TopUp>;
-export type TopUpResult = z.infer<typeof TopUpResult>;
 export type WebhookEvent = z.infer<typeof WebhookEvent>;
 export type ApiKeyDTO = z.infer<typeof ApiKeyDTO>;
 export type CreateApiKey = z.infer<typeof CreateApiKey>;

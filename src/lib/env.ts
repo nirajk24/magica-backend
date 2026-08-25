@@ -38,7 +38,7 @@ const EnvShape = z.object({
   FRONTEND_URL: z.string().url(),
 
   ADMISSION_CREDITS: z.coerce.bigint().default(500_000n),
-  SIGNUP_GRANT_CREDITS: z.coerce.bigint().default(30_000_000n),
+  SIGNUP_GRANT_CREDITS: z.coerce.bigint().default(1_000_000n),
   OPENROUTER_DAILY_REQUESTS: z.coerce.number().int().min(1).default(50),
   MAX_TURNS: z.coerce.number().int().min(1).max(6).default(3),
   MAX_STEPS: z.coerce.number().int().min(1).max(8).default(4),

@@ -61,6 +61,10 @@ export function toTurnStreamPart(part: TextStreamPart<ToolSet>): TurnStreamPart 
         toolName: part.toolName,
         input: part.input,
       };
+    // Carried because `stopWhen` cutting the tool loop short is otherwise indistinguishable from
+    // the model finishing: both end the stream with no further parts.
+    case "finish":
+      return { type: "finish", finishReason: part.finishReason };
     case "error":
       return { type: "error", error: describeStreamError(part.error) };
     default:

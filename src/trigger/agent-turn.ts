@@ -71,6 +71,18 @@ export const agentTurn = task({
       log: turnLog,
     });
 
+    /**
+     * Pushes the plan the terminal write closed out, so a card open on the last frame of the run
+     * sees the step settle. Flushed because nothing follows it: the run ends, and an unflushed
+     * write leaves the card on the spinner it was already showing.
+     */
+    const publishSettledPlan = async (plan: ActivePlan | null) => {
+      if (plan === null) return;
+
+      metadata.set("activePlan", plan as never);
+      await metadata.flush();
+    };
+
     /** The run-level effects a resolved interaction may apply; the tool decides, this persists. */
     const resolutionFx = {
       setExecutionMode: (mode: "auto" | "step_by_step") => recordExecutionMode(runId, mode),
@@ -208,24 +220,30 @@ export const agentTurn = task({
             output: resolution,
           }),
 
-        finalize: ({ blocks, tokenUsage, servedModel }) =>
-          completeTurn({
-            runId,
-            userId: turn.userId,
-            messageId: turn.assistantMessageId,
-            blocks,
-            tokenUsage,
-            servedModel,
-          }),
+        finalize: async ({ blocks, tokenUsage, servedModel }) => {
+          await publishSettledPlan(
+            await completeTurn({
+              runId,
+              userId: turn.userId,
+              messageId: turn.assistantMessageId,
+              blocks,
+              tokenUsage,
+              servedModel,
+            }),
+          );
+        },
 
-        finalizeFailed: ({ reason, blocks }) =>
-          failTurn({
-            runId,
-            userId: turn.userId,
-            messageId: turn.assistantMessageId,
-            blocks,
-            reason,
-          }),
+        finalizeFailed: async ({ reason, blocks }) => {
+          await publishSettledPlan(
+            await failTurn({
+              runId,
+              userId: turn.userId,
+              messageId: turn.assistantMessageId,
+              blocks,
+              reason,
+            }),
+          );
+        },
 
         now: Date.now,
         log: turnLog,

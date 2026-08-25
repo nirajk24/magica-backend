@@ -132,6 +132,7 @@ const toolCall = (name: string, id = "call_1"): TurnStreamPart => ({
   toolName: name,
   input: { prompt: "a mountain" },
 });
+const finish = (finishReason: string): TurnStreamPart => ({ type: "finish", finishReason });
 
 describe("a plain answer", () => {
   it("streams the text, finalizes once, and reports one turn", async () => {
@@ -336,6 +337,57 @@ describe("failure paths", () => {
       "text",
       "tool_use",
     ]);
+  });
+
+  /**
+   * `stopWhen` cutting the SDK's tool loop ends the stream exactly like a natural finish. Reported
+   * as success, it strands whatever the model had started — a plan step marked `in_progress` and
+   * never closed, which the progress card draws as a step that runs forever.
+   */
+  it("fails the turn when the step limit cut the tool loop, rather than claiming success", async () => {
+    const rec = harness({
+      turns: [[text("Now starting step 3. "), toolCall("update_step"), finish("tool-calls")]],
+    });
+
+    const result = await runAgentTurn(rec.deps, { runId: "run_1" });
+
+    expect(result).toMatchObject({ status: "failed", reason: "step limit reached" });
+    expect(rec.failed?.reason).toMatch(/step limit/i);
+    expect(rec.finalized, "a truncated turn must not finalize as completed").toBeNull();
+  });
+
+  it("keeps what a truncated turn had already produced", async () => {
+    const rec = harness({
+      turns: [[text("Two of three done. "), toolCall("gpt_image_2"), finish("tool-calls")]],
+    });
+
+    await runAgentTurn(rec.deps, { runId: "run_1" });
+
+    expect(rec.failed?.blocks.map((b) => b.type)).toEqual(["text", "tool_use"]);
+  });
+
+  it("treats a normal stop as a finish, so the common turn is unaffected", async () => {
+    const rec = harness({ turns: [[text("All done."), finish("stop")]] });
+
+    const result = await runAgentTurn(rec.deps, { runId: "run_1" });
+
+    expect(result).toMatchObject({ status: "completed", turns: 1 });
+    expect(rec.failed).toBeNull();
+  });
+
+  /**
+   * An interaction stop reports `tool-calls` too. It is a turn parking, not a turn truncated, and
+   * the suspend path claims it before the step-limit check can.
+   */
+  it("suspends rather than failing when the tool-call stop was an interaction", async () => {
+    const rec = harness({
+      turns: [[toolCall("submit_plan"), finish("tool-calls")], [text("approved, carrying on")]],
+    });
+
+    const result = await runAgentTurn(rec.deps, { runId: "run_1" });
+
+    expect(result).toMatchObject({ status: "completed", turns: 2 });
+    expect(rec.calls).toContain("suspendOn(submit_plan)");
   });
 
   it("never lets an error escape, because Trigger.dev reports it with no message", async () => {

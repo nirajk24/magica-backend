@@ -6,6 +6,8 @@ import { uuidv7 } from "@/lib/ids";
 import { logger } from "@/lib/logger";
 import { getChatForUser } from "@/services/chat.service";
 import {
+  completeTurn,
+  failTurn,
   patchActivePlanStep,
   recordExecutionMode,
   writeActivePlan,
@@ -31,6 +33,7 @@ async function seed(a?: { runStatus?: "running" | "completed" }) {
   const chatId = uuidv7();
   const runId = uuidv7();
   const userMessageId = uuidv7();
+  const assistantMessageId = uuidv7();
 
   await db.user.create({ data: { id: userId, email: `${userId}@test.local` } });
   await db.chat.create({ data: { id: chatId, userId, title: "t" } });
@@ -45,9 +48,31 @@ async function seed(a?: { runStatus?: "running" | "completed" }) {
       status: a?.runStatus ?? "running",
     },
   });
+  await db.message.create({
+    data: { id: assistantMessageId, chatId, runId, role: "assistant", status: "streaming" },
+  });
+  await db.agentRun.update({ where: { id: runId }, data: { assistantMessageId } });
 
-  return { userId, chatId, runId };
+  return { userId, chatId, runId, assistantMessageId };
 }
+
+/** The plan as the chat row now holds it, which is what a reloading client reads. */
+async function storedPlan(chatId: string): Promise<ActivePlan> {
+  const chat = await db.chat.findUniqueOrThrow({
+    where: { id: chatId },
+    select: { activePlan: true },
+  });
+
+  return chat.activePlan as unknown as ActivePlan;
+}
+
+const running: ActivePlan = {
+  ...PLAN,
+  steps: [
+    { ...PLAN.steps[0]!, status: "completed", note: "done" },
+    { ...PLAN.steps[1]!, status: "in_progress" },
+  ],
+};
 
 afterAll(async () => {
   await db.user.deleteMany({ where: { id: { in: created } } });
@@ -198,5 +223,96 @@ describe("a step-by-step approval, end to end through the tool's own effect", ()
     expect(after.steps[0]).toMatchObject({ status: "completed", note: "done" });
     expect(publishedPlans, "the live card moves with every write").toHaveLength(2);
     expect((await getChatForUser({ userId, chatId })).activePlan).toEqual(after);
+  });
+});
+
+/**
+ * A step goes `in_progress` before its work and `completed` after, so one still open at the terminal
+ * write belongs to work that will never happen. The progress card has no other signal — left alone
+ * it renders that step as running forever, on a run the API already reports as finished.
+ */
+describe("closing out a plan the turn left open", () => {
+  it("settles an open step when the turn fails, carrying the reason onto it", async () => {
+    const { userId, chatId, runId, assistantMessageId } = await seed();
+    await writeActivePlan(chatId, running);
+
+    await failTurn({
+      runId,
+      userId,
+      messageId: assistantMessageId,
+      blocks: [],
+      reason: "This turn reached its step limit before finishing.",
+    });
+
+    const [first, second] = (await storedPlan(chatId)).steps;
+
+    expect(second?.status, "a step nothing will finish is not still in progress").toBe("failed");
+    expect(second?.note).toMatch(/step limit/i);
+    expect(first?.status, "a step that did finish keeps its own outcome").toBe("completed");
+  });
+
+  it("settles an open step when the turn completes, because success strands it just the same", async () => {
+    const { userId, chatId, runId, assistantMessageId } = await seed();
+    await writeActivePlan(chatId, running);
+
+    await completeTurn({
+      runId,
+      userId,
+      messageId: assistantMessageId,
+      blocks: [],
+      tokenUsage: null,
+    });
+
+    expect((await storedPlan(chatId)).steps[1]?.status).toBe("failed");
+  });
+
+  it("returns the settled plan so the live card can be moved off its spinner", async () => {
+    const { userId, chatId, runId, assistantMessageId } = await seed();
+    await writeActivePlan(chatId, running);
+
+    const settled = await completeTurn({
+      runId,
+      userId,
+      messageId: assistantMessageId,
+      blocks: [],
+      tokenUsage: null,
+    });
+
+    expect(settled?.steps[1]?.status).toBe("failed");
+  });
+
+  it("leaves a finished plan alone and reports nothing to publish", async () => {
+    const { userId, chatId, runId, assistantMessageId } = await seed();
+    const finished: ActivePlan = {
+      ...PLAN,
+      steps: PLAN.steps.map((step) => ({ ...step, status: "completed" as const })),
+    };
+    await writeActivePlan(chatId, finished);
+
+    const settled = await completeTurn({
+      runId,
+      userId,
+      messageId: assistantMessageId,
+      blocks: [],
+      tokenUsage: null,
+    });
+
+    expect(settled, "an untouched plan must not be republished").toBeNull();
+    expect((await storedPlan(chatId)).steps.every((s) => s.status === "completed")).toBe(true);
+  });
+
+  it("is a no-op on a chat with no plan at all", async () => {
+    const { userId, chatId, runId, assistantMessageId } = await seed();
+
+    const settled = await completeTurn({
+      runId,
+      userId,
+      messageId: assistantMessageId,
+      blocks: [],
+      tokenUsage: null,
+    });
+
+    expect(settled).toBeNull();
+    expect((await db.chat.findUniqueOrThrow({ where: { id: chatId } })).activePlan).toBeNull();
   });
 });

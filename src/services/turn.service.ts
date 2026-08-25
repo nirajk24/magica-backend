@@ -1,7 +1,7 @@
 import { Prisma } from "@/generated/prisma/client";
 import { ActivePlan, type AssetDTO, type AttachmentDTO, type ContentBlock } from "@/contracts";
 import { refundAdmission } from "@/lib/credits";
-import { db } from "@/lib/db";
+import { db, type Tx } from "@/lib/db";
 import { isUniqueViolation, ToolError } from "@/lib/errors";
 import { describeModel } from "@/lib/models";
 import { publishLifecycleEvent } from "@/lib/webhook-emit";
@@ -253,6 +253,46 @@ export async function patchActivePlanStep(a: {
   return plan.data;
 }
 
+/**
+ * Closes out every step the turn left open, returning the plan it wrote or `null` when it changed
+ * nothing.
+ *
+ * A step is marked `in_progress` before its work starts and `completed` after, so one still open at
+ * a terminal write belongs to work that will never finish — and the progress card, which has no
+ * other signal, renders it as a step that runs forever. Recorded as `failed` carrying the turn's own
+ * reason rather than dropped, so the card says where the plan stopped and why.
+ *
+ * Runs inside the terminal transaction: read and write have to be atomic against a concurrent
+ * `patchActivePlanStep`, or a late `update_step` is overwritten by a stale copy of the plan.
+ */
+async function settleUnfinishedPlanSteps(
+  tx: Tx,
+  a: { chatId: string; note: string },
+): Promise<ActivePlan | null> {
+  const chat = await tx.chat.findUnique({
+    where: { id: a.chatId },
+    select: { activePlan: true },
+  });
+
+  const plan = ActivePlan.safeParse(chat?.activePlan);
+  if (!plan.success) return null;
+
+  const open = plan.data.steps.filter((step) => step.status === "in_progress");
+  if (open.length === 0) return null;
+
+  for (const step of open) {
+    step.status = "failed";
+    step.note = a.note;
+  }
+
+  await tx.chat.update({
+    where: { id: a.chatId },
+    data: { activePlan: plan.data as unknown as Prisma.InputJsonValue },
+  });
+
+  return plan.data;
+}
+
 /** Writes the blocks closed so far, so a crash loses only the text still streaming. */
 export async function persistTurnBlocks(a: {
   messageId: string;
@@ -369,10 +409,10 @@ async function finalizeTurn(a: {
   tokenUsage: { inputTokens: number; outputTokens: number } | null;
   servedModel?: string | null;
   failureReason?: string;
-}): Promise<void> {
+}): Promise<ActivePlan | null> {
   const { creditUsed, assets, produced } = await completedWork(a.runId);
 
-  const { chatId } = await db.$transaction(async (tx) => {
+  const { chatId, settledPlan } = await db.$transaction(async (tx) => {
     const message = await tx.message.update({
       where: { id: a.messageId },
       data: {
@@ -404,7 +444,12 @@ async function finalizeTurn(a: {
 
     await refundAdmission(tx, { userId: a.userId, runId: a.runId });
 
-    return { chatId: message.chatId };
+    const settledPlan = await settleUnfinishedPlanSteps(tx, {
+      chatId: message.chatId,
+      note: a.failureReason ?? "The turn ended before this step finished.",
+    });
+
+    return { chatId: message.chatId, settledPlan };
   });
 
   await publishLifecycleEvent({
@@ -419,6 +464,8 @@ async function finalizeTurn(a: {
       ...(a.failureReason ? { reason: a.failureReason } : {}),
     },
   });
+
+  return settledPlan;
 }
 
 export function completeTurn(a: {
@@ -428,7 +475,7 @@ export function completeTurn(a: {
   blocks: ContentBlock[];
   tokenUsage: { inputTokens: number; outputTokens: number } | null;
   servedModel?: string | null;
-}): Promise<void> {
+}): Promise<ActivePlan | null> {
   return finalizeTurn({ ...a, status: "completed" });
 }
 
@@ -438,7 +485,7 @@ export function failTurn(a: {
   messageId: string;
   blocks: ContentBlock[];
   reason: string;
-}): Promise<void> {
+}): Promise<ActivePlan | null> {
   return finalizeTurn({
     runId: a.runId,
     userId: a.userId,

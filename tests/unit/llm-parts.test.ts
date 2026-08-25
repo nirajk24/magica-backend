@@ -52,10 +52,20 @@ describe("mapping the SDK's stream onto ours", () => {
     ).toBe(true);
   });
 
+  /**
+   * The one signal separating "the model finished" from "`stopWhen` cut the tool loop short": both
+   * end the stream identically, and only `finishReason` says which happened.
+   */
+  it("carries the finish reason through", () => {
+    expect(part({ type: "finish", finishReason: "tool-calls" })).toEqual({
+      type: "finish",
+      finishReason: "tool-calls",
+    });
+  });
+
   it("drops the parts we do not act on rather than passing them on as unknowns", () => {
     for (const type of [
       "start",
-      "finish",
       "start-step",
       "finish-step",
       "text-start",

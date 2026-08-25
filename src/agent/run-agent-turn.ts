@@ -11,6 +11,7 @@ export type TurnStreamPart =
   | { type: "reasoning-delta"; text: string }
   | { type: "reasoning-end" }
   | { type: "tool-call"; toolCallId: string; toolName: string; input: unknown }
+  | { type: "finish"; finishReason: string }
   | { type: "error"; error: unknown };
 
 export type TurnUsage = { inputTokens?: number; outputTokens?: number };
@@ -78,6 +79,12 @@ function normalizeUsage(usage: TurnUsage) {
     : null;
 }
 
+/**
+ * Both loop bounds strand the same thing — work the model had started and cannot now finish — so
+ * they read as one failure to a user, whichever of the two fired.
+ */
+const STEP_LIMIT_REASON = "This turn reached its step limit before finishing.";
+
 /** Only our own error types carry copy safe to show a user. */
 function safeReason(error: unknown): string {
   if (error instanceof AppError || error instanceof ToolError) return error.message;
@@ -128,6 +135,7 @@ export async function runAgentTurn(
 
       let pending: PendingInteraction | null = null;
       let produced = false;
+      let finishReason: string | undefined;
 
       for await (const part of stream.parts) {
         switch (part.type) {
@@ -187,6 +195,10 @@ export async function runAgentTurn(
             break;
           }
 
+          case "finish":
+            finishReason = part.finishReason;
+            break;
+
           case "error":
             // A mid-stream failure arrives as a part, not a rejection. The adapter has already
             // turned it into user-safe copy, so it is rethrown rather than replaced.
@@ -231,6 +243,19 @@ export async function runAgentTurn(
         continue;
       }
 
+      // `tool-calls` here means the SDK's own loop stopped while the model still wanted to call a
+      // tool, which past the interaction check above can only be `MAX_STEPS`. It reads exactly like
+      // a natural finish, so finalizing on it reports success for a turn that was cut off — the
+      // symptom being a plan step left `in_progress` that renders as a step which never ends.
+      if (finishReason === "tool-calls") {
+        deps.log.warn({ runId, turns }, "the step limit cut the tool loop short");
+        state.closeText();
+
+        await deps.finalizeFailed({ reason: STEP_LIMIT_REASON, blocks: state.blocks() });
+
+        return { status: "failed", turns, segments: state.segments(), reason: "step limit reached" };
+      }
+
       state.closeText();
 
       if (tokenUsage) state.pushUsage(tokenUsage);
@@ -248,10 +273,7 @@ export async function runAgentTurn(
     }
 
     if (!completed) {
-      await deps.finalizeFailed({
-        reason: "This turn reached its step limit before finishing.",
-        blocks: state.blocks(),
-      });
+      await deps.finalizeFailed({ reason: STEP_LIMIT_REASON, blocks: state.blocks() });
       return { status: "failed", turns, segments: state.segments(), reason: "turn limit reached" };
     }
 

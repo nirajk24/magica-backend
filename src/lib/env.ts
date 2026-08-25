@@ -39,7 +39,10 @@ const EnvShape = z.object({
 
   ADMISSION_CREDITS: z.coerce.bigint().default(500_000n),
   SIGNUP_GRANT_CREDITS: z.coerce.bigint().default(1_000_000n),
-  OPENROUTER_DAILY_REQUESTS: z.coerce.number().int().min(1).default(50),
+  /** The whole deployment's daily model-request budget, enforced in `rate-limit`. */
+  OPENROUTER_DAILY_REQUESTS: z.coerce.number().int().min(1).default(800),
+  /** One account's share of it. `User.dailyRequestLimit` overrides this per account. */
+  OPENROUTER_REQUESTS_PER_USER_PER_DAY: z.coerce.number().int().min(1).default(60),
   MAX_TURNS: z.coerce.number().int().min(1).max(6).default(3),
   MAX_STEPS: z.coerce.number().int().min(1).max(8).default(4),
   /** Distinct skills one run may load. Each load costs an OpenRouter request from a 50/day budget. */

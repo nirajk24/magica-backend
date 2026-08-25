@@ -2,6 +2,7 @@ import { metadata, task, wait } from "@trigger.dev/sdk";
 import type { ActivePlan, WaitpointResolution } from "@/contracts";
 import { getBalance } from "@/lib/credits";
 import { recordRateLimit } from "@/lib/llm-status";
+import { recordRequestUsage } from "@/lib/rate-limit";
 import { loadSkillRegistry } from "@/lib/skills/load";
 import { bindContext, logger } from "@/lib/logger";
 import { getTool } from "@/tools/registry";
@@ -253,6 +254,10 @@ export const agentTurn = task({
       },
       { runId },
     );
+
+    // Recorded after the fact rather than per request: the ceiling is checked when a turn is
+    // admitted, so counting here bounds the NEXT turn instead of abandoning this one halfway.
+    await recordRequestUsage({ userId: turn.userId, requests });
 
     turnLog.info(
       { ...result, requests },

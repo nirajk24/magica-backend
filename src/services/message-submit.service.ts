@@ -5,7 +5,7 @@ import { env } from "@/lib/env";
 import { AppError, isUniqueViolation } from "@/lib/errors";
 import { uuidv7 } from "@/lib/ids";
 import type { Logger } from "@/lib/logger";
-import { consumeSendAllowance } from "@/lib/rate-limit";
+import { assertRequestAllowance, consumeSendAllowance } from "@/lib/rate-limit";
 import { claimMessageAttachments } from "@/services/attachment.service";
 import { createChat, getChatForUser, NEW_CHAT_ID } from "@/services/chat.service";
 import { dispatchTurn, resolveStaleRun } from "@/services/run.service";
@@ -125,6 +125,17 @@ export async function submitMessage(a: {
   if (!a.chatId) throw new AppError("VALIDATION_ERROR", "A chat id is required.");
 
   await consumeSendAllowance({ userId: a.userId, perMinute: env.SEND_RATE_PER_MINUTE });
+
+  const account = await db.user.findUniqueOrThrow({
+    where: { id: a.userId },
+    select: { dailyRequestLimit: true },
+  });
+
+  await assertRequestAllowance({
+    userId: a.userId,
+    perUserPerDay: account.dailyRequestLimit ?? env.OPENROUTER_REQUESTS_PER_USER_PER_DAY,
+    globalPerDay: env.OPENROUTER_DAILY_REQUESTS,
+  });
 
   const chat =
     a.chatId === NEW_CHAT_ID

@@ -33,15 +33,25 @@ function secondsLeftInDay(): number {
  * allowance does not consume another. The table's key is `(userId, window)`, so this needs no
  * schema change.
  */
-async function countAgainst(subject: string, window: string): Promise<number> {
+async function countAgainst(subject: string, window: string, by = 1): Promise<number> {
   const { count } = await db.sendRateLimit.upsert({
     where: { userId_window: { userId: subject, window } },
-    create: { userId: subject, window, count: 1 },
-    update: { count: { increment: 1 } },
+    create: { userId: subject, window, count: by },
+    update: { count: { increment: by } },
     select: { count: true },
   });
 
   return count;
+}
+
+/** Reads a bucket without consuming it, for a ceiling checked before the work it bounds. */
+async function currentCount(subject: string, window: string): Promise<number> {
+  const row = await db.sendRateLimit.findUnique({
+    where: { userId_window: { userId: subject, window } },
+    select: { count: true },
+  });
+
+  return row?.count ?? 0;
 }
 
 async function consumeAllowance(a: {
@@ -120,4 +130,62 @@ export async function consumeApiKeyAllowance(a: {
       );
     }
   }
+}
+
+const GLOBAL_SUBJECT = "openrouter";
+
+const requestWindow = () => `openrouter:day:${currentDay()}`;
+
+/**
+ * Refuses a turn that would run against an exhausted model-request budget.
+ *
+ * Requests rather than messages, because the two are not comparable: a question is one request and
+ * a plan-driven turn is up to `MAX_TURNS × MAX_STEPS`. Capping messages lets the expensive user
+ * through and stops the cheap one, which is backwards.
+ *
+ * Checked BEFORE the turn and recorded after, so a turn is never abandoned halfway. A user can
+ * therefore overshoot by at most one turn's worth, which is the price of not killing work in flight.
+ *
+ * The global bucket exists because per-user ceilings do not bound the total: ten users at their own
+ * limits will exhaust a shared daily quota between them without any of them exceeding anything.
+ */
+export async function assertRequestAllowance(a: {
+  userId: string;
+  perUserPerDay: number;
+  globalPerDay: number;
+}): Promise<void> {
+  const window = requestWindow();
+  const [mine, everyone] = await Promise.all([
+    currentCount(a.userId, window),
+    currentCount(GLOBAL_SUBJECT, window),
+  ]);
+
+  if (everyone >= a.globalPerDay) {
+    throw new AppError(
+      "RATE_LIMITED",
+      "This demo has reached its limit for today. It resets in a few hours.",
+      undefined,
+      secondsLeftInDay(),
+    );
+  }
+
+  if (mine >= a.perUserPerDay) {
+    throw new AppError(
+      "RATE_LIMITED",
+      "You have reached today's limit. It resets in a few hours.",
+      undefined,
+      secondsLeftInDay(),
+    );
+  }
+}
+
+/** Adds one finished turn's model requests to the day, for the account and for everyone. */
+export async function recordRequestUsage(a: { userId: string; requests: number }): Promise<void> {
+  if (a.requests <= 0) return;
+
+  const window = requestWindow();
+  await Promise.all([
+    countAgainst(a.userId, window, a.requests),
+    countAgainst(GLOBAL_SUBJECT, window, a.requests),
+  ]);
 }

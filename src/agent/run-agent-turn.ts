@@ -141,7 +141,13 @@ export async function runAgentTurn(
         switch (part.type) {
           case "text-delta": {
             await deps.appendText(part.text);
-            state.appendText(part.text);
+
+            // The stream needs a row to render into, and only a block opening adds one. Without
+            // this the answer stays invisible until the next structural update, then appears whole.
+            if (state.appendText(part.text)) {
+              await deps.setMetadata({ blocks: state.projection() });
+            }
+
             produced = true;
             break;
           }

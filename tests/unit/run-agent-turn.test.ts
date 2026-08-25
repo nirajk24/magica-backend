@@ -218,6 +218,50 @@ describe("tool calls", () => {
   });
 });
 
+describe("the streaming text block", () => {
+  it("publishes the projection on the delta that opens the block", async () => {
+    const rec = harness({ turns: [[text("Here"), text(" it is.")]] });
+
+    await runAgentTurn(rec.deps, { runId: "run_1" });
+
+    const withStreamingText = rec.patches.filter((patch) =>
+      patch.blocks?.some((block) => block.type === "text" && block.streaming),
+    );
+
+    expect(withStreamingText.length).toBeGreaterThan(0);
+  });
+
+  it("publishes it once per block, not once per token", async () => {
+    const rec = harness({ turns: [[text("a"), text("b"), text("c"), text("d")]] });
+
+    await runAgentTurn(rec.deps, { runId: "run_1" });
+
+    const opens = rec.patches.filter(
+      (patch) =>
+        patch.blocks?.some((block) => block.type === "text" && block.streaming) &&
+        patch.phase === undefined,
+    );
+
+    expect(opens).toHaveLength(1);
+  });
+
+  it("publishes again for the block that opens after a tool call", async () => {
+    const rec = harness({
+      turns: [[text("Drawing it. "), toolCall("gpt_image_2"), text("Here you go.")]],
+    });
+
+    await runAgentTurn(rec.deps, { runId: "run_1" });
+
+    const opens = rec.patches.filter(
+      (patch) =>
+        patch.blocks?.some((block) => block.type === "text" && block.streaming) &&
+        patch.phase === undefined,
+    );
+
+    expect(opens).toHaveLength(2);
+  });
+});
+
 describe("reasoning", () => {
   it("streams the tail to metadata and persists the block on close", async () => {
     const rec = harness({

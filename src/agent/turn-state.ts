@@ -44,8 +44,12 @@ export function createTurnState() {
   }
 
   return {
-    appendText(delta: string): void {
+    /** True when this delta opened a new text block, which nothing else in the projection signals. */
+    appendText(delta: string): boolean {
+      const opened = text === "";
       text += delta;
+
+      return opened && text !== "";
     },
 
     closeText,

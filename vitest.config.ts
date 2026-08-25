@@ -32,7 +32,7 @@ export default defineConfig({
           name: "integration",
           include: ["tests/integration/**/*.test.ts"],
           environment: "node",
-          setupFiles: ["tests/setup/env.ts", "tests/msw/setup.ts"],
+          setupFiles: ["tests/setup/db.ts", "tests/setup/env.ts", "tests/msw/setup.ts"],
           // Set before dotenv runs, which does not override existing vars. `SEND_RATE_PER_MINUTE`
           // keeps the rate-limit test to a few round trips instead of eleven; `DEMO_MODE` pins the
           // pricing tier the ledger assertions are written against, which a developer's `.env`

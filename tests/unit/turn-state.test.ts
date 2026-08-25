@@ -119,6 +119,34 @@ describe("stream offsets", () => {
     expect(streaming[0]?.chars, "an open block has no final count yet").toBeUndefined();
   });
 
+  /**
+   * The reasoning tail travels in `reasoningText`, but a client renders rows out of `blocks` — so
+   * without the open block there it has a live run and nothing to draw, and shows a blank for as
+   * long as the model reasons before its first closed block.
+   */
+  it("projects the reasoning block while it is still open", () => {
+    const state = createTurnState();
+
+    state.appendReasoning("weighing the options", 0);
+
+    const projection = state.projection();
+
+    expect(projection).toHaveLength(1);
+    expect(projection[0]).toMatchObject({ type: "thinking", streaming: true });
+  });
+
+  it("stops marking it streaming once it closes, and does not duplicate it", () => {
+    const state = createTurnState();
+
+    state.appendReasoning("weighing the options", 0);
+    state.closeReasoning(100);
+
+    const thinking = state.projection().filter((block) => block.type === "thinking");
+
+    expect(thinking).toHaveLength(1);
+    expect(thinking[0]?.streaming).toBeUndefined();
+  });
+
   it("bounds the projection to the metadata cap, keeping the newest rows", () => {
     const state = createTurnState();
 

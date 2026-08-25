@@ -109,6 +109,15 @@ export function createTurnState() {
         ...(block.type === "text" ? { chars: block.text.length } : {}),
       }));
 
+      // An open block is projected as structure with no content, the same as a closed one — the
+      // client renders the row and fills it from `reasoningText` or the text stream. Without this
+      // a turn that is reasoning has an empty `blocks`, so the client has a live run with nothing
+      // to draw and shows a blank where the reasoning is already arriving. Reasoning precedes text
+      // within a turn, so it is pushed first.
+      if (reasoning) {
+        projected.push({ segment: peekSegment(), type: "thinking", streaming: true });
+      }
+
       if (text !== "") {
         projected.push({ segment: peekSegment(), type: "text", streaming: true });
       }

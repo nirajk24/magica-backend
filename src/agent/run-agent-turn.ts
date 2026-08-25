@@ -140,7 +140,12 @@ export async function runAgentTurn(
 
           case "reasoning-delta": {
             state.appendReasoning(part.text, deps.now());
-            await deps.setMetadata({ reasoningText: state.reasoningTail() });
+            // `blocks` travels with the text: the open reasoning block only exists in the
+            // projection, so sending the tail without it leaves the client nothing to render into.
+            await deps.setMetadata({
+              reasoningText: state.reasoningTail(),
+              blocks: state.projection(),
+            });
             produced = true;
             break;
           }

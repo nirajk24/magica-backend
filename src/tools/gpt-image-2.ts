@@ -65,8 +65,13 @@ export const gptImage2 = defineTool({
     "Generate an image from a text prompt, or edit existing images. Use for any request to " +
     "create, draw, illustrate or design a picture. To change a picture that already exists — " +
     "restyle it, add or remove something, recolour it — pass its URL in `uploadedImages` and " +
-    "describe the change in the prompt; the URL must come from an earlier tool result. Prefer " +
-    "the default size unless the user asks for specific dimensions.",
+    "describe the change in the prompt; the URL must come from an earlier tool result. " +
+    "`size` accepts only the values listed; it is not a free aspect ratio. Use `Auto` for any " +
+    "shape that is not listed — including 4:5, 5:4 and 9:16 — and the provider picks the closest " +
+    "it supports. Do not approximate a requested ratio with a listed size, and do not reason " +
+    "about which listed size is nearest: `Auto` is the answer whenever the exact ratio is absent. " +
+    "Leave `n` at 1 unless the user explicitly asks for variations — every extra image is charged " +
+    "in full.",
   display: { label: "Generating image", icon: "image" },
   tags: ["media", "image"],
   input: Input,

@@ -107,7 +107,9 @@ export const cropImage = defineTool({
   description:
     "Crop an image to a rectangle. Give either percentages (x_percent, y_percent, width_percent, " +
     "height_percent) or pixels (x_px, y_px, width_px, height_px) — all four of whichever you " +
-    "choose, and never a mix of the two. Percentages are measured from the top-left corner.",
+    "choose, and never a mix of the two. Percentages are measured from the top-left corner. " +
+    "Prefer this over regenerating when an image already exists and only its framing is wrong, and " +
+    "crop BEFORE generating rather than after — cropping is far cheaper than a second generation.",
   display: { label: "Cropping image", icon: "crop" },
   tags: ["media", "image"],
   input: Input,

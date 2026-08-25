@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ContentBlock } from "@/contracts";
 import { buildSystemPrompt, toModelMessages } from "@/prompts/system";
+import { getTool } from "@/tools/registry";
 
 const SYSTEM_PROMPT = buildSystemPrompt({ index: [] });
 
@@ -15,7 +16,7 @@ describe("the base prompt", () => {
   });
 
   it("forbids inventing a url, which is the one hallucination that looks real", () => {
-    expect(SYSTEM_PROMPT).toMatch(/never\s+write\s+a\s+file\s+URL\s+yourself/i);
+    expect(SYSTEM_PROMPT).toMatch(/never construct or guess one/i);
   });
 
   it("says nothing about planning unless the user asked for it", () => {
@@ -221,5 +222,51 @@ describe("file context on history messages", () => {
     const messages = build({ history: [{ role: "user", content: "hello" }] });
 
     expect(messages[0]?.content).toBe("hello");
+  });
+});
+
+/**
+ * A rule whose absence makes the output WRONG rather than merely worse cannot sit behind
+ * `load_skill`, which the model may or may not call. These are the ones that moved out of the
+ * skills, and this is what stops them drifting back.
+ */
+describe("rules that cannot depend on a skill being loaded", () => {
+  it("forbids inventing a price in the prompt, not in media-planning", () => {
+    expect(SYSTEM_PROMPT).toMatch(/never state a price/i);
+  });
+
+  it("forbids constructing a url in the prompt, not in video-production", () => {
+    expect(SYSTEM_PROMPT).toMatch(/never construct or guess one/i);
+  });
+
+  /**
+   * These two pulled in opposite directions inside one sentence — a ban on writing urls, then
+   * "refer only to files a tool returned", which reads as leave to paste the tool's own url. 12 of
+   * 112 assistant replies embedded one, mostly as `![alt](url)`. They are separate rules and the
+   * prompt has to keep them apart.
+   */
+  it("bans a url in the reply without that reading as leave to paste a tool's own", () => {
+    expect(SYSTEM_PROMPT).toMatch(/never appears in your reply/i);
+    expect(SYSTEM_PROMPT, "the observed failure is a markdown embed").toContain("![alt](url)");
+    expect(
+      SYSTEM_PROMPT,
+      "the old wording licensed the very thing the same sentence forbade",
+    ).not.toMatch(/refer only\s+to files a tool returned/i);
+  });
+
+  it("puts the per-image charge on the tool that charges it", () => {
+    expect(getTool("gpt_image_2")?.description).toMatch(/every extra image is charged/i);
+  });
+
+  it("puts the size rule on the tool whose enum it describes", () => {
+    expect(getTool("gpt_image_2")?.description).toMatch(/`Auto` is the answer/);
+  });
+
+  it("puts crop-before-generate on the tool that is the cheaper path", () => {
+    expect(getTool("crop_image")?.description).toMatch(/crop BEFORE generating/);
+  });
+
+  it("puts merge order on the tool that consumes the order", () => {
+    expect(getTool("merge_videos")?.description).toMatch(/never sort the list/i);
   });
 });

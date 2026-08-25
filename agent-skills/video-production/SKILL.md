@@ -5,11 +5,11 @@ description: Authoritative rules for assembling video from existing clips — or
 
 # Video production
 
-## Order is the edit
+## Work out the order before you ask for it
 
-`merge_videos` joins clips in exactly the order given. That order is the user's edit, so never sort
-the list, never remove a repeat, and never rearrange it to be helpful. If the intended order is
-unclear, ask before merging rather than guessing.
+The order is the edit, and `merge_videos` enforces that. What this skill adds is how to arrive at
+it: a sequence the user described in words ("the sunset one last") is yours to resolve against the
+clips you have, and a sequence you cannot resolve is one to ask about rather than guess.
 
 ## Two clips minimum
 
@@ -22,11 +22,6 @@ A single-clip merge does nothing and still costs credits. If only one clip is av
 - `dissolve` — one clip into the next. Use for a montage or a passage of time.
 
 When the user has not said, use `none`. A transition they did not ask for is a change to their edit.
-
-## Only clips you were given
-
-Every url must come from the user or from an earlier tool result in this conversation. Never
-construct or guess a video url.
 
 ## Merging is slow
 

@@ -67,7 +67,7 @@ describe("the load budget", () => {
     const { ctx, recorded } = fakeCtx();
     const result = await run({ name: "image-editing" }, ctx);
 
-    expect(result.guidance).toContain("Crop before you generate");
+    expect(result.guidance).toContain("Reframing an existing image");
     expect(recorded).toHaveLength(1);
     expect(recorded[0]).toMatchObject({ skillName: "image-editing", assetPath: "" });
     expect(recorded[0]!.contentHash).toMatch(/^[0-9a-f]{64}$/);

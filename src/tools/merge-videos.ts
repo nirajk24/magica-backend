@@ -34,7 +34,8 @@ export const mergeVideos = defineTool({
   name: NODE_TYPE,
   description:
     "Join two or more videos into one, in the order given. Optionally set a transition between " +
-    "clips: none, fade, or dissolve.",
+    "clips: none, fade, or dissolve. The order you pass IS the user's edit — never sort the list, " +
+    "remove a repeat, or rearrange it to be helpful. If the intended order is unclear, ask.",
   display: { label: "Merging videos", icon: "video" },
   tags: ["media", "video"],
   input: Input,

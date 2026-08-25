@@ -18,10 +18,10 @@ asked what it will cost. A single image from a single prompt needs no plan — j
   tool it will call.
 - **Notes** — anything the user should know before agreeing, especially a limitation of the result.
 
-## Never state a price yourself
+## Name the tool, let the system price it
 
-You do not know what anything costs. Name the tool and its inputs for each step and the system
-prices it. A number you invent will be wrong, and it will be shown to the user as if it were real.
+Every step that spends credits names the tool and the inputs it will run with. That is what the
+pricing reads, so a step described only in prose is a step shown to the user with no cost beside it.
 
 ## Steps must be executable
 

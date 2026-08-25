@@ -165,6 +165,9 @@ model ToolInvocation {
   input        Json
   output       Json?
   errorMessage String?
+  // Free text, deliberately: the enum lives in `lib/tool-failure` where the retry policy is, and a
+  // Postgres enum would need a migration to add a code the application already understands.
+  failureCode  String?
   magicaRunId  String?
   subModelId   String?
   creditUsed   BigInt           @default(0)
@@ -177,6 +180,7 @@ model ToolInvocation {
   @@unique([runId, toolUseId])
   @@index([runId])
   @@index([magicaRunId])
+  @@index([failureCode, createdAt(sort: Desc)])
 }
 
 model RunSkill {

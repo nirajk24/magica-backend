@@ -49,10 +49,12 @@ describe("4. unknown skill", () => {
     expect(recorded, "nothing is recorded for a skill that does not exist").toHaveLength(0);
   });
 
-  it("is not retryable, so the model rephrases instead of hammering the same name", async () => {
+  it("reads as a bad argument, so the model corrects the name rather than abandoning skills", async () => {
     const { ctx } = fakeCtx();
 
-    await expect(run({ name: "no-such-skill" }, ctx)).rejects.toMatchObject({ retryable: false });
+    await expect(run({ name: "no-such-skill" }, ctx)).rejects.toMatchObject({
+      code: "invalid_input",
+    });
   });
 
   it("rejects a name that could not be a directory before looking anything up", () => {

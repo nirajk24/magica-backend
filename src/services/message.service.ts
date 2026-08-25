@@ -41,6 +41,7 @@ const invocationSelect = {
   input: true,
   output: true,
   errorMessage: true,
+  failureCode: true,
   creditUsed: true,
   startedAt: true,
   completedAt: true,
@@ -59,6 +60,7 @@ type InvocationRow = {
   input: unknown;
   output: unknown;
   errorMessage: string | null;
+  failureCode: string | null;
   creditUsed: bigint;
   startedAt: Date | null;
   completedAt: Date | null;
@@ -90,6 +92,7 @@ function toInvocationDTO(row: InvocationRow): ToolInvocationDTO {
     input: row.input,
     output: row.output ?? null,
     errorMessage: row.errorMessage,
+    failureCode: row.failureCode,
     creditUsed: row.creditUsed.toString(),
     durationMs:
       row.startedAt && row.completedAt

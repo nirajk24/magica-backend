@@ -51,6 +51,8 @@ export const ToolInvocationDTO = z.object({
   input: z.unknown(),
   output: z.unknown().nullable(),
   errorMessage: z.string().nullable(),
+  /** Why it failed, for copy and retry affordances a bare message cannot carry. */
+  failureCode: z.string().nullable(),
   creditUsed: z.string(),
   durationMs: z.number().nullable(),
 });

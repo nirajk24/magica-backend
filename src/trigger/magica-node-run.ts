@@ -1,6 +1,8 @@
-import { task, wait } from "@trigger.dev/sdk";
+import { tags, task, wait } from "@trigger.dev/sdk";
 import { db } from "@/lib/db";
+import { ToolError } from "@/lib/errors";
 import { bindContext, logger } from "@/lib/logger";
+import type { ToolFailureCode } from "@/lib/tool-failure";
 import { pollUntilTerminal, runMagicaNode } from "@/tools/magica-client";
 
 export type MagicaNodeRunPayload = {
@@ -11,11 +13,21 @@ export type MagicaNodeRunPayload = {
   timeoutMs?: number;
 };
 
-export type MagicaNodeRunResult = {
+export type MagicaNodeRunSuccess = {
   output: unknown;
   creditUsed: string;
   resumed: boolean;
 };
+
+/**
+ * A refused or abandoned generation is an ANSWER, not a crashed task, so it crosses the task
+ * boundary as data. Thrown, it arrives as Trigger.dev's own serialized error, which the caller
+ * cannot trust as user-safe copy and so replaces with something generic — losing the reason the
+ * provider gave. `result.ok === false` then means only what it should: the task itself died.
+ */
+export type MagicaNodeRunResult =
+  | ({ ok: true } & MagicaNodeRunSuccess)
+  | { ok: false; failure: { code: ToolFailureCode; message: string } };
 
 type Sleep = (ms: number) => Promise<void>;
 
@@ -33,7 +45,7 @@ type Sleep = (ms: number) => Promise<void>;
 export async function executeMagicaNode(
   payload: MagicaNodeRunPayload,
   sleep: Sleep,
-): Promise<MagicaNodeRunResult> {
+): Promise<MagicaNodeRunSuccess> {
   const log = bindContext(logger, { processId: payload.invocationId });
 
   const invocation = await db.toolInvocation.findUniqueOrThrow({
@@ -76,6 +88,21 @@ export async function executeMagicaNode(
 export const magicaNodeRun = task({
   id: "magica-node-run",
   retry: { maxAttempts: 1 },
-  run: (payload: MagicaNodeRunPayload): Promise<MagicaNodeRunResult> =>
-    executeMagicaNode(payload, (ms) => wait.for({ seconds: Math.ceil(ms / 1000) })),
+  run: async (payload: MagicaNodeRunPayload): Promise<MagicaNodeRunResult> => {
+    try {
+      const success = await executeMagicaNode(payload, (ms) =>
+        wait.for({ seconds: Math.ceil(ms / 1000) }),
+      );
+
+      return { ok: true, ...success };
+    } catch (error) {
+      if (!(error instanceof ToolError)) throw error;
+
+      // Returning the failure completes the run, so the dashboard would otherwise show a refused
+      // generation as a success. The tag is what keeps it findable and countable there.
+      await tags.add(`failed:${error.code}`);
+
+      return { ok: false, failure: { code: error.code, message: error.message } };
+    }
+  },
 });

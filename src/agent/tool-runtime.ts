@@ -164,12 +164,24 @@ export function createToolRuntime(a: {
         { idempotencyKey: invocationId },
       );
 
+      // Trigger.dev's own `ok` covers the task dying — crash, OOM, worker lost. Its error is a
+      // serialized foreign object, so it cannot be shown to anyone and the message here is ours.
       if (!result.ok) {
-        a.log.error({ invocationId, err: result.error }, "node child run failed");
-        throw new ToolError("That generation could not be completed.", true);
+        a.log.error({ invocationId, err: result.error }, "node child run crashed");
+        throw new ToolError("That generation could not be completed.", "internal");
       }
 
-      return { output: result.output.output, creditUsed: BigInt(result.output.creditUsed) };
+      if (!result.output.ok) {
+        const { code, message } = result.output.failure;
+        a.log.warn({ invocationId, code }, "node run failed");
+
+        throw new ToolError(message, code);
+      }
+
+      return {
+        output: result.output.output,
+        creditUsed: BigInt(result.output.creditUsed),
+      };
     },
 
     async completeInvocation({ invocationId, output, durationMs, actualCost }) {
@@ -218,7 +230,7 @@ export function createToolRuntime(a: {
     },
 
     /** A failed step is free: the pre-execute charge is reversed by the amount recorded. */
-    async failInvocation({ invocationId, message, durationMs }) {
+    async failInvocation({ invocationId, code, message, durationMs }) {
       await db.$transaction(async (tx) => {
         await refundToolCharge(tx, {
           userId: turn.userId,
@@ -230,13 +242,14 @@ export function createToolRuntime(a: {
           data: {
             status: "failed",
             errorMessage: message,
+            failureCode: code,
             completedAt: new Date(),
             creditUsed: 0,
           },
         });
       });
 
-      a.log.warn({ invocationId, durationMs }, "tool failed");
+      a.log.warn({ invocationId, code, durationMs }, "tool failed");
       await publish();
     },
 

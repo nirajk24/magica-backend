@@ -2,12 +2,13 @@ import { tool, type ToolSet } from "ai";
 import { z } from "zod";
 import { AppError, ToolError } from "@/lib/errors";
 import type { Logger } from "@/lib/logger";
+import { isRetryable, type ToolFailureCode } from "@/lib/tool-failure";
 import type { AgentTool, NodeRunRequest, ToolCtx } from "@/tools/define";
 
 /** What the model gets back. Failures are data, not throws: a rejected prompt is a normal path. */
 export type ToolOutcome =
   | { ok: true; data: unknown }
-  | { ok: false; error: string; retryable: boolean };
+  | { ok: false; code: ToolFailureCode; error: string; retryable: boolean };
 
 export type TurnContext = { userId: string; chatId: string; runId: string };
 
@@ -32,6 +33,7 @@ export type ToolRuntime = {
   }) => Promise<void>;
   failInvocation: (a: {
     invocationId: string;
+    code: ToolFailureCode;
     message: string;
     durationMs: number;
   }) => Promise<void>;
@@ -46,14 +48,36 @@ export type ToolRuntime = {
   log: Logger;
 };
 
+/**
+ * The one place an `AppError`'s HTTP-shaped code becomes a code the model can act on. The two
+ * enums answer different questions — what status to return, and what the model should do next —
+ * so they are mapped rather than shared.
+ */
+const APP_ERROR_CODES: Partial<Record<AppError["code"], ToolFailureCode>> = {
+  INSUFFICIENT_CREDITS: "out_of_credits",
+  RATE_LIMITED: "rate_limited",
+  VALIDATION_ERROR: "invalid_input",
+  LIMIT_EXCEEDED: "invalid_input",
+  QUOTA_EXCEEDED: "invalid_input",
+  WAITPOINT_EXPIRED: "cancelled",
+};
+
 /** Only our own error types carry copy safe to show a user. */
-function toolFailure(error: unknown): { error: string; retryable: boolean } {
-  if (error instanceof ToolError) return { error: error.message, retryable: error.retryable };
-  if (error instanceof AppError) return { error: error.message, retryable: false };
-  if (error instanceof z.ZodError) {
-    return { error: "The tool returned a result in an unexpected shape.", retryable: false };
+function toolFailure(error: unknown): { code: ToolFailureCode; error: string; retryable: boolean } {
+  const failure = (code: ToolFailureCode, message: string) => ({
+    code,
+    error: message,
+    retryable: isRetryable(code),
+  });
+
+  if (error instanceof ToolError) return failure(error.code, error.message);
+  if (error instanceof AppError) {
+    return failure(APP_ERROR_CODES[error.code] ?? "internal", error.message);
   }
-  return { error: "That step failed for an unexpected reason.", retryable: true };
+  if (error instanceof z.ZodError) {
+    return failure("internal", "The tool returned a result in an unexpected shape.");
+  }
+  return failure("internal", "That step failed for an unexpected reason.");
 }
 
 function describeInvalidInput(error: z.ZodError): string {
@@ -97,6 +121,7 @@ export function toAiSdkTools(
         if (!(await runtime.isRunActive())) {
           return {
             ok: false,
+            code: "cancelled" as const,
             error: "This run was stopped, so the step was not started.",
             retryable: false,
           };
@@ -104,7 +129,7 @@ export function toAiSdkTools(
 
         const parsed = agentTool.input.safeParse(rawInput);
         if (!parsed.success) {
-          return { ok: false, error: describeInvalidInput(parsed.error), retryable: false };
+          return { ok: false, ...toolFailure(new ToolError(describeInvalidInput(parsed.error), "invalid_input")) };
         }
 
         const input: unknown = parsed.data;
@@ -124,7 +149,12 @@ export function toAiSdkTools(
         } catch (error) {
           const failure = toolFailure(error);
           runtime.log.warn({ err: error, invocationId, toolName: name }, "tool not charged");
-          await runtime.failInvocation({ invocationId, message: failure.error, durationMs: elapsed() });
+          await runtime.failInvocation({
+            invocationId,
+            code: failure.code,
+            message: failure.error,
+            durationMs: elapsed(),
+          });
 
           return { ok: false, ...failure };
         }
@@ -160,7 +190,12 @@ export function toAiSdkTools(
         } catch (error) {
           const failure = toolFailure(error);
           runtime.log.warn({ err: error, invocationId, toolName: name }, "tool failed");
-          await runtime.failInvocation({ invocationId, message: failure.error, durationMs: elapsed() });
+          await runtime.failInvocation({
+            invocationId,
+            code: failure.code,
+            message: failure.error,
+            durationMs: elapsed(),
+          });
 
           return { ok: false, ...failure };
         }

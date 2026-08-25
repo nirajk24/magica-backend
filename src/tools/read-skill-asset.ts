@@ -30,13 +30,13 @@ export const readSkillAssetTool = defineTool({
 
   execute: async (input, ctx) => {
     const skill = getSkill(input.name);
-    if (!skill) throw new ToolError(`There is no skill called "${input.name}".`, false);
+    if (!skill) throw new ToolError(`There is no skill called "${input.name}".`, "invalid_input");
 
     // An asset only makes sense once its guidance has named it, and requiring the load first also
     // closes the budget: reaching a new skill through this tool would otherwise skip the limit.
     const loaded = await ctx.loadedSkillNames();
     if (!loaded.includes(skill.name)) {
-      throw new ToolError(`Load the "${skill.name}" skill before reading its files.`, false);
+      throw new ToolError(`Load the "${skill.name}" skill before reading its files.`, "invalid_input");
     }
 
     try {
@@ -50,7 +50,7 @@ export const readSkillAssetTool = defineTool({
 
       return { name: skill.name, path: input.path, content };
     } catch (error) {
-      if (error instanceof SkillAccessError) throw new ToolError(error.message, false);
+      if (error instanceof SkillAccessError) throw new ToolError(error.message, "invalid_input");
       throw error;
     }
   },

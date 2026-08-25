@@ -281,3 +281,44 @@ describe("what a running tool card can show", () => {
     ).toBe(3_000);
   });
 });
+
+/**
+ * The reason a failure gives has to survive all the way to a row, or "how often are we rejected?"
+ * is a LIKE over prose and the UI has one grey box for every kind of failure.
+ */
+describe("what a failed invocation records", () => {
+  it("stores the code beside the message", async () => {
+    const { userId, chatId, runId } = await seedRun();
+    const invocationId = uuidv7();
+
+    await db.toolInvocation.create({
+      data: {
+        id: invocationId,
+        runId,
+        toolUseId: `call_${invocationId}`,
+        toolName: "gpt_image_2",
+        input: {},
+        status: "running",
+      },
+    });
+
+    const runtime = createToolRuntime({
+      turn: { userId, chatId, runId },
+      publish: () => Promise.resolve(),
+      publishPlan: () => Promise.resolve(),
+      log: logger,
+    });
+
+    await runtime.failInvocation({
+      invocationId,
+      code: "timed_out",
+      message: "The Magica run did not finish in time.",
+      durationMs: 120_000,
+    });
+
+    const row = await db.toolInvocation.findUniqueOrThrow({ where: { id: invocationId } });
+
+    expect(row.failureCode).toBe("timed_out");
+    expect(row.errorMessage).toBe("The Magica run did not finish in time.");
+  });
+});

@@ -92,15 +92,21 @@ export const publicToolRun = task({
 
       return { status: "completed" as const };
     } catch (error) {
-      const message =
-        error instanceof ToolError ? error.message : "That tool run could not be completed.";
+      const failure =
+        error instanceof ToolError
+          ? { code: error.code, message: error.message }
+          : { code: "internal" as const, message: "That tool run could not be completed." };
 
       await runtime.failInvocation({
         invocationId,
-        message,
+        ...failure,
         durationMs: Date.now() - startedAt,
       });
-      await closeDirectToolRun({ runId: payload.runId, status: "failed", failureReason: message });
+      await closeDirectToolRun({
+        runId: payload.runId,
+        status: "failed",
+        failureReason: failure.message,
+      });
 
       log.warn({ err: error }, "public tool run failed");
 

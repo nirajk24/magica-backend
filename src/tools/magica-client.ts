@@ -51,16 +51,16 @@ function headers() {
  * for exhausted credits, not a permissions problem.
  */
 function transportError(status: number, retryAfter: string | null): ToolError {
-  if (status === 401) return new ToolError("Magica rejected our API key.");
-  if (status === 403) return new ToolError("The Magica account is out of credits.");
+  if (status === 401) return new ToolError("Magica rejected our API key.", "internal");
+  if (status === 403) return new ToolError("The Magica account is out of credits.", "out_of_credits");
   if (status === 429) {
     return new ToolError(
       `Magica is rate limiting us${retryAfter ? `; retry in ${retryAfter}s` : ""}.`,
-      true,
+      "rate_limited",
     );
   }
-  if (status >= 500) return new ToolError("Magica is temporarily unavailable.", true);
-  return new ToolError(`Magica did not accept the run (${status}).`);
+  if (status >= 500) return new ToolError("Magica is temporarily unavailable.", "provider_unavailable");
+  return new ToolError(`Magica did not accept the run (${status}).`, "invalid_input");
 }
 
 /**
@@ -91,13 +91,14 @@ export async function pollUntilTerminal(
       }
       throw new ToolError(
         run.userMessage ?? run.error ?? `The Magica run ${run.status.toLowerCase()}.`,
+        run.status === "CANCELED" ? "cancelled" : "rejected_by_provider",
       );
     }
 
     await sleep(POLL_INTERVAL_MS);
   }
 
-  throw new ToolError("The Magica run did not finish in time.", true);
+  throw new ToolError("The Magica run did not finish in time.", "timed_out");
 }
 
 /**

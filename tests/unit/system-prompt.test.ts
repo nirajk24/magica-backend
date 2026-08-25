@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ContentBlock } from "@/contracts";
 import { buildSystemPrompt, toModelMessages } from "@/prompts/system";
+import { FAILURE_POLICY } from "@/lib/tool-failure";
 import { getTool } from "@/tools/registry";
 
 const SYSTEM_PROMPT = buildSystemPrompt({ index: [] });
@@ -230,6 +231,19 @@ describe("file context on history messages", () => {
  * `load_skill`, which the model may or may not call. These are the ones that moved out of the
  * skills, and this is what stops them drifting back.
  */
+describe("the tool-result contract", () => {
+  it("writes every code's guidance from the policy table, so none can ship unexplained", () => {
+    for (const [code, policy] of Object.entries(FAILURE_POLICY)) {
+      expect(SYSTEM_PROMPT, code).toContain(`\`${code}\``);
+      expect(SYSTEM_PROMPT, code).toContain(policy.guidance);
+    }
+  });
+
+  it("forbids guessing a cause, which is how a poll timeout became a copyright story", () => {
+    expect(SYSTEM_PROMPT).toMatch(/never speculate about why something failed/i);
+  });
+});
+
 describe("rules that cannot depend on a skill being loaded", () => {
   it("forbids inventing a price in the prompt, not in media-planning", () => {
     expect(SYSTEM_PROMPT).toMatch(/never state a price/i);

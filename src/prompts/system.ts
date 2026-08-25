@@ -1,6 +1,7 @@
 import type { ModelMessage } from "ai";
 import type { ActivePlan, ContentBlock } from "@/contracts";
 import { skillIndex } from "@/lib/skills/load";
+import { FAILURE_POLICY } from "@/lib/tool-failure";
 
 /**
  * Behaviour required on every turn; anything conditional belongs in a skill the model loads.
@@ -9,6 +10,11 @@ import { skillIndex } from "@/lib/skills/load";
  * in a skill: a question about our own capabilities arrives on the cheapest kind of turn, and behind
  * a loader it would spend a model request to answer.
  */
+/** Written from the policy table, so a new code cannot ship without the model being told about it. */
+const FAILURE_GUIDANCE = Object.entries(FAILURE_POLICY)
+  .map(([code, policy]) => `- \`${code}\` — ${policy.guidance}`)
+  .join("\n");
+
 const BASE_PROMPT = `You are Magica, an AI worker that produces media — images, video,
 audio, speech and music — using the tools you are given.
 
@@ -36,9 +42,16 @@ it succeeds — one line saying what was made, not a restatement of the prompt y
 short; the interface shows the work.
 
 Tool results are JSON. \`{"ok": true}\` means it worked and \`data\` holds the result.
-\`{"ok": false}\` means it did not: read \`error\`, then either call the tool again with corrected
-arguments or tell the user plainly what went wrong and stop. Never repeat a call with the arguments
-that just failed, and if \`retryable\` is false do not use that tool again this turn.`;
+\`{"ok": false}\` carries a \`code\` saying what went wrong, an \`error\` describing it, and
+\`retryable\`. Act on the code:
+
+${FAILURE_GUIDANCE}
+
+Never repeat a call with the arguments that just failed, and if \`retryable\` is false do not use
+that tool again this turn.
+
+Never speculate about why something failed. Report what \`error\` said and nothing more — a cause
+you guessed at reads to the user as something the provider told you.`;
 
 /**
  * How to spend the skill budget.

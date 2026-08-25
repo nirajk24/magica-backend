@@ -205,7 +205,7 @@ describe("nothing is charged for work that never starts", () => {
       value: "",
     });
 
-    expect(outcome).toMatchObject({ ok: false, retryable: false });
+    expect(outcome).toMatchObject({ ok: false, code: "invalid_input", retryable: true });
     expect(outcome.ok === false && outcome.error).toMatch(/value:.*call the tool again/s);
     expect(
       f.calls,
@@ -238,6 +238,7 @@ describe("exhaustion is caught before the external cost", () => {
     ]);
     expect(outcome).toEqual({
       ok: false,
+      code: "out_of_credits",
       error: "Not enough credits to continue.",
       retryable: false,
     });
@@ -248,7 +249,12 @@ describe("failures come back as data, not as exceptions", () => {
   it("passes a safety rejection through verbatim, because the model can rephrase", async () => {
     const tools = oneTool({
       execute: () =>
-        Promise.reject(new ToolError("That prompt was blocked. Try describing it differently.")),
+        Promise.reject(
+          new ToolError(
+            "That prompt was blocked. Try describing it differently.",
+            "rejected_by_provider",
+          ),
+        ),
     });
 
     const outcome = await invoke(toAiSdkTools(tools, TURN, f.runtime), "demo_tool", {
@@ -257,22 +263,48 @@ describe("failures come back as data, not as exceptions", () => {
 
     expect(outcome).toEqual({
       ok: false,
+      code: "rejected_by_provider",
       error: "That prompt was blocked. Try describing it differently.",
-      retryable: false,
+      retryable: true,
     });
     expect(f.failed?.message).toBe("That prompt was blocked. Try describing it differently.");
   });
 
-  it("carries the retryable flag so a rate limit reads differently from a rejection", async () => {
+  it("carries the code, and derives retryable from it rather than trusting a caller", async () => {
     const tools = oneTool({
-      execute: () => Promise.reject(new ToolError("Magica is rate limiting us.", true)),
+      execute: () => Promise.reject(new ToolError("Magica is rate limiting us.", "rate_limited")),
     });
 
     const outcome = await invoke(toAiSdkTools(tools, TURN, f.runtime), "demo_tool", {
       value: "x",
     });
 
-    expect(outcome).toMatchObject({ ok: false, retryable: true });
+    expect(outcome).toMatchObject({ ok: false, code: "rate_limited", retryable: true });
+  });
+
+  it("makes a provider rejection retryable, because rewording is the fix", async () => {
+    const tools = oneTool({
+      execute: () => Promise.reject(new ToolError("That prompt was blocked.", "rejected_by_provider")),
+    });
+
+    const outcome = await invoke(toAiSdkTools(tools, TURN, f.runtime), "demo_tool", {
+      value: "x",
+    });
+
+    expect(outcome).toMatchObject({ ok: false, code: "rejected_by_provider", retryable: true });
+  });
+
+  it("maps an AppError onto a code the model can act on", async () => {
+    const tools = oneTool({
+      execute: () =>
+        Promise.reject(new AppError("INSUFFICIENT_CREDITS", "Not enough credits to continue.")),
+    });
+
+    const outcome = await invoke(toAiSdkTools(tools, TURN, f.runtime), "demo_tool", {
+      value: "x",
+    });
+
+    expect(outcome).toMatchObject({ ok: false, code: "out_of_credits", retryable: false });
   });
 
   it("never lets a raw provider error reach the model", async () => {

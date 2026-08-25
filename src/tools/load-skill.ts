@@ -46,7 +46,7 @@ export const loadSkill = defineTool({
     if (!skill) {
       throw new ToolError(
         `There is no skill called "${input.name}". Available skills: ${known()}.`,
-        false,
+        "invalid_input",
       );
     }
 
@@ -59,7 +59,7 @@ export const loadSkill = defineTool({
       throw new ToolError(
         `This turn has already loaded ${loaded.length} skills (${loaded.join(", ")}), which is the ` +
           "limit. Continue with the guidance you have.",
-        false,
+        "cancelled",
       );
     }
 

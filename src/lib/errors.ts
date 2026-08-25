@@ -1,4 +1,5 @@
 import type { ErrorCode } from "@/contracts";
+import { isRetryable, type ToolFailureCode } from "@/lib/tool-failure";
 
 const STATUS: Record<ErrorCode, number> = {
   UNAUTHENTICATED: 401,
@@ -50,13 +51,19 @@ export function isUniqueViolation(e: unknown): boolean {
  *
  * INVARIANT: `message` is safe to show a user and a model. Never construct one from a raw
  * provider string or stack.
+ * INVARIANT: `retryable` is derived from `code`, never passed. The two disagreeing is what made a
+ * rewordable provider rejection read as "do not use this tool again".
  */
 export class ToolError extends Error {
   constructor(
     message: string,
-    readonly retryable = false,
+    readonly code: ToolFailureCode = "internal",
   ) {
     super(message);
     this.name = "ToolError";
+  }
+
+  get retryable(): boolean {
+    return isRetryable(this.code);
   }
 }

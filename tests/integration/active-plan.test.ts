@@ -270,7 +270,7 @@ describe("closing out a plan the turn left open", () => {
     const { userId, chatId, runId, assistantMessageId } = await seed();
     await writeActivePlan(chatId, running);
 
-    const settled = await completeTurn({
+    const closeOut = await completeTurn({
       runId,
       userId,
       messageId: assistantMessageId,
@@ -278,18 +278,15 @@ describe("closing out a plan the turn left open", () => {
       tokenUsage: null,
     });
 
-    expect(settled?.steps[1]?.status).toBe("failed");
+    expect(closeOut).toMatchObject({ action: "settled" });
+    expect(closeOut?.action === "settled" && closeOut.plan.steps[1]?.status).toBe("failed");
   });
 
-  it("leaves a finished plan alone and reports nothing to publish", async () => {
+  it("keeps a plan holding a failed step, the only place the user sees which one broke", async () => {
     const { userId, chatId, runId, assistantMessageId } = await seed();
-    const finished: ActivePlan = {
-      ...PLAN,
-      steps: PLAN.steps.map((step) => ({ ...step, status: "completed" as const })),
-    };
-    await writeActivePlan(chatId, finished);
+    await writeActivePlan(chatId, running);
 
-    const settled = await completeTurn({
+    await completeTurn({
       runId,
       userId,
       messageId: assistantMessageId,
@@ -297,14 +294,16 @@ describe("closing out a plan the turn left open", () => {
       tokenUsage: null,
     });
 
-    expect(settled, "an untouched plan must not be republished").toBeNull();
-    expect((await storedPlan(chatId)).steps.every((s) => s.status === "completed")).toBe(true);
+    expect(
+      (await db.chat.findUniqueOrThrow({ where: { id: chatId } })).activePlan,
+      "clearing it would hide the failure it was just settled to show",
+    ).not.toBeNull();
   });
 
   it("is a no-op on a chat with no plan at all", async () => {
     const { userId, chatId, runId, assistantMessageId } = await seed();
 
-    const settled = await completeTurn({
+    const closeOut = await completeTurn({
       runId,
       userId,
       messageId: assistantMessageId,
@@ -312,7 +311,70 @@ describe("closing out a plan the turn left open", () => {
       tokenUsage: null,
     });
 
-    expect(settled).toBeNull();
+    expect(closeOut).toBeNull();
     expect((await db.chat.findUniqueOrThrow({ where: { id: chatId } })).activePlan).toBeNull();
+  });
+});
+
+/**
+ * The card renders on the presence of `activePlan` alone. A plan whose steps have all completed is
+ * history the transcript already carries, so leaving the row set pins a finished tracker above the
+ * composer for the rest of the chat.
+ */
+describe("dropping a plan that has nothing left to run", () => {
+  const finished: ActivePlan = {
+    ...PLAN,
+    steps: PLAN.steps.map((step) => ({ ...step, status: "completed" as const })),
+  };
+
+  it("clears the row once every step has completed", async () => {
+    const { userId, chatId, runId, assistantMessageId } = await seed();
+    await writeActivePlan(chatId, finished);
+
+    const closeOut = await completeTurn({
+      runId,
+      userId,
+      messageId: assistantMessageId,
+      blocks: [],
+      tokenUsage: null,
+    });
+
+    expect(closeOut).toEqual({ action: "cleared" });
+    expect((await db.chat.findUniqueOrThrow({ where: { id: chatId } })).activePlan).toBeNull();
+  });
+
+  it("clears it on a failed turn too, when the plan itself did finish", async () => {
+    const { userId, chatId, runId, assistantMessageId } = await seed();
+    await writeActivePlan(chatId, finished);
+
+    await failTurn({
+      runId,
+      userId,
+      messageId: assistantMessageId,
+      blocks: [],
+      reason: "The model stopped responding partway through.",
+    });
+
+    expect((await db.chat.findUniqueOrThrow({ where: { id: chatId } })).activePlan).toBeNull();
+  });
+
+  /** Step mode ends a turn after each step, so mid-plan is the normal way to reach a terminal write. */
+  it("leaves a plan with pending steps alone, because that is a turn boundary not an ending", async () => {
+    const { userId, chatId, runId, assistantMessageId } = await seed();
+    await writeActivePlan(chatId, {
+      ...PLAN,
+      steps: [{ ...PLAN.steps[0]!, status: "completed" }, { ...PLAN.steps[1]! }],
+    });
+
+    const closeOut = await completeTurn({
+      runId,
+      userId,
+      messageId: assistantMessageId,
+      blocks: [],
+      tokenUsage: null,
+    });
+
+    expect(closeOut, "a plan still mid-flight must survive the turn that paused it").toBeNull();
+    expect((await storedPlan(chatId)).steps[1]?.status).toBe("pending");
   });
 });

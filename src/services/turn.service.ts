@@ -254,21 +254,35 @@ export async function patchActivePlanStep(a: {
 }
 
 /**
- * Closes out every step the turn left open, returning the plan it wrote or `null` when it changed
- * nothing.
+ * What the terminal write did to the chat's plan, so the caller can mirror it onto the live card.
+ * `null` means it touched nothing and there is nothing to publish.
+ */
+export type PlanCloseOut = { action: "settled"; plan: ActivePlan } | { action: "cleared" };
+
+/**
+ * Closes out the chat's plan at the end of a turn: settles the steps the turn left open, then drops
+ * the plan entirely once it has nothing left to run.
  *
- * A step is marked `in_progress` before its work starts and `completed` after, so one still open at
- * a terminal write belongs to work that will never finish — and the progress card, which has no
- * other signal, renders it as a step that runs forever. Recorded as `failed` carrying the turn's own
- * reason rather than dropped, so the card says where the plan stopped and why.
+ * A step is marked `in_progress` before its work starts and `completed` after, so one still open
+ * here belongs to work that will never happen — and the progress card, which has no other signal,
+ * renders it as a step that runs forever. Recorded as `failed` carrying the turn's own reason rather
+ * than dropped, so the card says where the plan stopped and why.
+ *
+ * A plan every step of which completed is history, not state: cleared, because the card renders on
+ * the presence of `activePlan` alone and would otherwise sit above the composer for the rest of the
+ * chat. A plan holding a failed step is kept for exactly that reason — it is the only place the user
+ * can see which step failed — and the next approved plan replaces it.
+ *
+ * INVARIANT: a plan with work still pending is never cleared. Step mode ends a turn after each
+ * step, so mid-plan is the normal state to finish a turn in.
  *
  * Runs inside the terminal transaction: read and write have to be atomic against a concurrent
  * `patchActivePlanStep`, or a late `update_step` is overwritten by a stale copy of the plan.
  */
-async function settleUnfinishedPlanSteps(
+async function closeOutPlan(
   tx: Tx,
   a: { chatId: string; note: string },
-): Promise<ActivePlan | null> {
+): Promise<PlanCloseOut | null> {
   const chat = await tx.chat.findUnique({
     where: { id: a.chatId },
     select: { activePlan: true },
@@ -278,19 +292,25 @@ async function settleUnfinishedPlanSteps(
   if (!plan.success) return null;
 
   const open = plan.data.steps.filter((step) => step.status === "in_progress");
-  if (open.length === 0) return null;
 
   for (const step of open) {
     step.status = "failed";
     step.note = a.note;
   }
 
+  if (plan.data.steps.every((step) => step.status === "completed")) {
+    await tx.chat.update({ where: { id: a.chatId }, data: { activePlan: Prisma.DbNull } });
+    return { action: "cleared" };
+  }
+
+  if (open.length === 0) return null;
+
   await tx.chat.update({
     where: { id: a.chatId },
     data: { activePlan: plan.data as unknown as Prisma.InputJsonValue },
   });
 
-  return plan.data;
+  return { action: "settled", plan: plan.data };
 }
 
 /** Writes the blocks closed so far, so a crash loses only the text still streaming. */
@@ -409,10 +429,10 @@ async function finalizeTurn(a: {
   tokenUsage: { inputTokens: number; outputTokens: number } | null;
   servedModel?: string | null;
   failureReason?: string;
-}): Promise<ActivePlan | null> {
+}): Promise<PlanCloseOut | null> {
   const { creditUsed, assets, produced } = await completedWork(a.runId);
 
-  const { chatId, settledPlan } = await db.$transaction(async (tx) => {
+  const { chatId, planCloseOut } = await db.$transaction(async (tx) => {
     const message = await tx.message.update({
       where: { id: a.messageId },
       data: {
@@ -444,12 +464,12 @@ async function finalizeTurn(a: {
 
     await refundAdmission(tx, { userId: a.userId, runId: a.runId });
 
-    const settledPlan = await settleUnfinishedPlanSteps(tx, {
+    const planCloseOut = await closeOutPlan(tx, {
       chatId: message.chatId,
       note: a.failureReason ?? "The turn ended before this step finished.",
     });
 
-    return { chatId: message.chatId, settledPlan };
+    return { chatId: message.chatId, planCloseOut };
   });
 
   await publishLifecycleEvent({
@@ -465,7 +485,7 @@ async function finalizeTurn(a: {
     },
   });
 
-  return settledPlan;
+  return planCloseOut;
 }
 
 export function completeTurn(a: {
@@ -475,7 +495,7 @@ export function completeTurn(a: {
   blocks: ContentBlock[];
   tokenUsage: { inputTokens: number; outputTokens: number } | null;
   servedModel?: string | null;
-}): Promise<ActivePlan | null> {
+}): Promise<PlanCloseOut | null> {
   return finalizeTurn({ ...a, status: "completed" });
 }
 
@@ -485,7 +505,7 @@ export function failTurn(a: {
   messageId: string;
   blocks: ContentBlock[];
   reason: string;
-}): Promise<ActivePlan | null> {
+}): Promise<PlanCloseOut | null> {
   return finalizeTurn({
     runId: a.runId,
     userId: a.userId,

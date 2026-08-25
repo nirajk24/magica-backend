@@ -15,6 +15,7 @@ import {
   persistTurnBlocks,
   recordExecutionMode,
   writeActivePlan,
+  type PlanCloseOut,
 } from "@/services/turn.service";
 import { closeWaitpoint, openWaitpoint } from "@/services/waitpoint.service";
 import { buildInteractionOutcome } from "@/agent/interaction";
@@ -72,14 +73,16 @@ export const agentTurn = task({
     });
 
     /**
-     * Pushes the plan the terminal write closed out, so a card open on the last frame of the run
-     * sees the step settle. Flushed because nothing follows it: the run ends, and an unflushed
-     * write leaves the card on the spinner it was already showing.
+     * Mirrors what the terminal write did to the plan onto the live card, so a client still on the
+     * run's last frame sees the same thing a reloading one reads off the chat row. Flushed because
+     * nothing follows it: the run ends, and an unflushed write leaves the card as it was.
      */
-    const publishSettledPlan = async (plan: ActivePlan | null) => {
-      if (plan === null) return;
+    const publishPlanCloseOut = async (closeOut: PlanCloseOut | null) => {
+      if (closeOut === null) return;
 
-      metadata.set("activePlan", plan as never);
+      if (closeOut.action === "cleared") metadata.del("activePlan");
+      else metadata.set("activePlan", closeOut.plan as never);
+
       await metadata.flush();
     };
 
@@ -221,7 +224,7 @@ export const agentTurn = task({
           }),
 
         finalize: async ({ blocks, tokenUsage, servedModel }) => {
-          await publishSettledPlan(
+          await publishPlanCloseOut(
             await completeTurn({
               runId,
               userId: turn.userId,
@@ -234,7 +237,7 @@ export const agentTurn = task({
         },
 
         finalizeFailed: async ({ reason, blocks }) => {
-          await publishSettledPlan(
+          await publishPlanCloseOut(
             await failTurn({
               runId,
               userId: turn.userId,

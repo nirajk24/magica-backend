@@ -82,6 +82,7 @@ export const gptImage2 = defineTool({
       nodeType: NODE_TYPE,
       subModelId: input.uploadedImages ? SUB_MODEL_EDIT : SUB_MODEL_TEXT,
       input,
+      timeoutMs: input.quality === "High" ? 300_000 : 120_000,
     });
 
     ctx.reportCost(creditUsed);

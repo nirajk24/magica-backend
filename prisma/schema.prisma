@@ -25,6 +25,8 @@ model User {
   chats         Chat[]
   ledger        CreditLedgerEntry[]
   attachments   Attachment[]
+  apiKeys       ApiKey[]
+  webhooks      WebhookEndpoint[]
 }
 
 enum LedgerEntryType {
@@ -312,6 +314,10 @@ model LlmStatus {
 model ApiKey {
   id        String    @id @default(uuid(7))
   userId    String
+  // A credential must not outlive the account it authenticates. Without this relation a deleted
+  // user's keys stayed valid, and the public API's `ensureUserWithGrant` would recreate the
+  // account — with a fresh signup grant — on the next request one of them made.
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   hashedKey String    @unique
   rateLimitPerMinute Int?
   rateLimitPerDay    Int?
@@ -327,6 +333,7 @@ model ApiKey {
 model WebhookEndpoint {
   id         String            @id @default(uuid(7))
   userId     String
+  user       User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   url        String
   secret     String
   events     String[]

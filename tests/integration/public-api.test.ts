@@ -41,6 +41,8 @@ vi.mock("@trigger.dev/sdk", async (importOriginal) => {
 
 const { db } = await import("@/lib/db");
 const { uuidv7 } = await import("@/lib/ids");
+const { createApiKey } = await import("@/services/api-key.service");
+const { resolveApiKey } = await import("@/lib/api-keys");
 
 const apiKeysRoute = await import("@/app/api/v1/api-keys/route");
 const apiKeyRoute = await import("@/app/api/v1/api-keys/[apiKeyId]/route");
@@ -484,5 +486,24 @@ describe("the active-key cap", () => {
     );
 
     expect((await issueKeyResponse({ name: "after revoke" })).status).toBe(200);
+  });
+});
+
+/**
+ * The public API bootstraps an account from whatever `userId` a key resolves to, so a key that
+ * outlived its owner would recreate that account with a fresh signup grant. 786 such keys existed
+ * in production before `ApiKey` gained a relation to `User`.
+ */
+describe("a key whose owner is gone", () => {
+  it("stops authenticating", async () => {
+    const userId = `test_${uuidv7()}`;
+    await db.user.create({ data: { id: userId, email: `${userId}@test.local` } });
+
+    const { key } = await createApiKey({ userId, input: { name: "doomed" } });
+    expect(await resolveApiKey(key), "valid while the account exists").not.toBeNull();
+
+    await db.user.delete({ where: { id: userId } });
+
+    expect(await resolveApiKey(key)).toBeNull();
   });
 });

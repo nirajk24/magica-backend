@@ -77,6 +77,9 @@ export async function resolveApiKey(
   const hashedKey = hashApiKey(key);
 
   const row = await db.apiKey.findFirst({
+    // `user` is selected to be asserted on, not read: the cascade should make an orphaned key
+    // impossible, but the public API bootstraps an account from whatever `userId` it resolves — so
+    // a key that outlived its owner would recreate that account, signup grant and all.
     where: { hashedKey, revokedAt: null },
     select: {
       id: true,
@@ -85,10 +88,12 @@ export async function resolveApiKey(
       expiresAt: true,
       rateLimitPerMinute: true,
       rateLimitPerDay: true,
+      user: { select: { id: true } },
     },
   });
 
   if (!row || !hashesMatch(row.hashedKey, hashedKey)) return null;
+  if (!row.user) return null;
   if (row.expiresAt !== null && row.expiresAt.getTime() <= now.getTime()) return null;
 
   return {

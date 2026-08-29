@@ -1,9 +1,15 @@
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadSkillRegistry, readSkillAsset, SkillAccessError, skillIndex } from "@/lib/skills/load";
-import { findSkillsDir, scanSkills, SkillScanError, skillsRoot } from "@/lib/skills/scan";
+import {
+  findSkillsDir,
+  MAX_SKILL_BYTES,
+  scanSkills,
+  SkillScanError,
+  skillsRoot,
+} from "@/lib/skills/scan";
 import { buildSystemPrompt } from "@/prompts/system";
 import { registry } from "@/tools/registry";
 
@@ -198,8 +204,26 @@ describe("2. malformed frontmatter", () => {
     expect(() => scanSkills(fixture("skills-malformed"))).toThrow(/broken-skill/);
   });
 
+  /**
+   * Written here rather than committed as a fixture: sized from `MAX_SKILL_BYTES`, it stays over
+   * the cap if the cap moves, which a fixture of a fixed size would silently stop doing.
+   */
+  const oversizedSkillsRoot = () => {
+    const root = mkdtempSync(join(tmpdir(), "magica-oversized-"));
+    mkdirSync(join(root, "huge-skill"));
+    writeFileSync(
+      join(root, "huge-skill", "SKILL.md"),
+      `---\nname: huge-skill\ndescription: Larger than the byte cap allows.\n---\n` +
+        "padding line\n".repeat(Math.ceil(MAX_SKILL_BYTES / 13) + 1),
+    );
+
+    return root;
+  };
+
   it("rejects a file over the byte cap rather than pulling it into a prompt", () => {
-    expect(() => scanSkills(fixture("skills-oversized"))).toThrow(/over the 65536 limit/);
+    expect(() => scanSkills(oversizedSkillsRoot())).toThrow(
+      new RegExp(`over the ${MAX_SKILL_BYTES} limit`),
+    );
   });
 });
 

@@ -1006,6 +1006,16 @@
                                         }
                                       ]
                                     },
+                                    "failureCode": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
                                     "creditUsed": {
                                       "type": "string"
                                     },
@@ -1030,6 +1040,7 @@
                                     "input",
                                     "output",
                                     "errorMessage",
+                                    "failureCode",
                                     "creditUsed",
                                     "durationMs"
                                   ],

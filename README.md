@@ -59,7 +59,7 @@ boot naming the variable, rather than surfacing as `undefined` somewhere later.
 ### Checks
 
 ```bash
-pnpm typecheck && pnpm lint && pnpm test    # 503 tests; integration tests need DATABASE_URL
+pnpm typecheck && pnpm lint && pnpm test    # 544 tests across 40 files; integration needs TEST_DATABASE_URL
 pnpm check:wiring                           # fails on any export no production code reaches
 ```
 
